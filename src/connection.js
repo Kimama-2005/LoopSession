@@ -10,7 +10,9 @@ export class PeerConnection {
       iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
     });
     this.dc = null;
+    this.audioDc = null;
     this.onMessage = () => {};
+    this.onAudio = () => {}; // バイナリ音声チャンク受信 (ArrayBuffer)
     this.onOpen = () => {};
     this.onState = () => {};
     this.pc.onconnectionstatechange = () =>
@@ -23,9 +25,21 @@ export class PeerConnection {
     dc.onmessage = (e) => this.onMessage(JSON.parse(e.data));
   }
 
+  _setupAudio(dc) {
+    this.audioDc = dc;
+    dc.binaryType = "arraybuffer";
+    dc.onmessage = (e) => this.onAudio(e.data);
+  }
+
   send(m) {
     if (this.dc && this.dc.readyState === "open") {
       this.dc.send(JSON.stringify(m));
+    }
+  }
+
+  sendAudio(buf) {
+    if (this.audioDc && this.audioDc.readyState === "open") {
+      this.audioDc.send(buf);
     }
   }
 
@@ -33,6 +47,7 @@ export class PeerConnection {
   async createOffer() {
     const dc = this.pc.createDataChannel("session", { ordered: true });
     this._setup(dc);
+    this._setupAudio(this.pc.createDataChannel("audio", { ordered: true }));
     const offer = await this.pc.createOffer();
     await this.pc.setLocalDescription(offer);
     await this._iceComplete();
@@ -46,7 +61,10 @@ export class PeerConnection {
 
   // 参加者側: オファーを受けてアンサーを作る
   async createAnswer(offerCode) {
-    this.pc.ondatachannel = (e) => this._setup(e.channel);
+    this.pc.ondatachannel = (e) => {
+      if (e.channel.label === "audio") this._setupAudio(e.channel);
+      else this._setup(e.channel);
+    };
     await this.pc.setRemoteDescription(decode(offerCode));
     const answer = await this.pc.createAnswer();
     await this.pc.setLocalDescription(answer);

@@ -1,5 +1,6 @@
 import { AudioClock } from "./audioClock.js";
 import { Synth } from "./synth.js";
+import { AudioLink } from "./audio.js";
 
 // メッセージ (DataChannel 上の JSON):
 //   { type:'config', config:{bpm,beatsPerBar,delayBars,sessionStart} }
@@ -35,7 +36,9 @@ export class Session {
     this.onRemoteNote = () => {}; // UI 鍵盤ハイライト用 (on, note)
     this.onLoopNote = () => {}; // ループ再生音のハイライト用 (on, note)
     this.onLoopState = () => {}; // (recState, label, eventCount)
+    this.audio = new AudioLink(this); // オーディオI/F音声転送
     conn.onMessage = (m) => this._handle(m);
+    conn.onAudio = (buf) => this.audio.onAudioMessage(buf);
   }
 
   // ホストが設定を確定して配信

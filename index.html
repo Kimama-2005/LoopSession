@@ -94,6 +94,25 @@
       <div class="keyboard" id="keyboard"></div>
     </section>
 
+    <!-- ============ ③ オーディオ ============ -->
+    <section class="card">
+      <h2>③ オーディオ（音声転送・β）</h2>
+      <p class="hint">
+        オーディオI/Fの入力を<b>1小節遅れ</b>で相手へ送ります。
+        <b>ヘッドホン推奨</b>（スピーカーだとハウリング）。自分の音は<b>機材側でモニター</b>してください。
+        接続（または🎧ソロ）してから使います。
+      </p>
+      <div class="audio-row">
+        <label>入力デバイス
+          <select id="audioDevice"></select>
+        </label>
+        <button id="btnAudioRefresh" title="デバイス一覧を更新">⟳</button>
+        <button id="btnAudio">🎤 音声オン</button>
+        <div class="level"><div id="levelBar"></div></div>
+      </div>
+      <div id="audioStatus" class="hint"></div>
+    </section>
+
     <!-- ============ ログ ============ -->
     <section class="card">
       <h2>ログ</h2>
@@ -101,6 +120,6 @@
     </section>
   </main>
 
-  <script type="module" src="./src/main.js?v=3"></script>
+  <script type="module" src="./src/main.js?v=4"></script>
 </body>
 </html>

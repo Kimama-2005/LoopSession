@@ -101,6 +101,24 @@ button.mode.active {
 .key.drum { background: #2a2f3a; color: #d7dbe4; flex: 1; font-size: 9px; }
 .key.on { background: var(--accent); color: #06121f; }
 .key.on.black, .key.on.drum { background: var(--accent); color: #06121f; }
+.audio-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px;
+}
+.audio-row select {
+  background: #10131a; color: var(--fg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 4px 6px; font-size: 13px; max-width: 220px;
+}
+#btnAudioRefresh { background: #3a3f4b; color: var(--fg); padding: 6px 9px; }
+#btnAudio { background: var(--accent2); color: #06121f; }
+#btnAudio.on { background: #ff5a5a; color: #fff; }
+.level {
+  flex: 1; min-width: 120px; height: 12px; background: #10131a;
+  border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+}
+#levelBar {
+  height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent2), var(--warn));
+  transition: width 0.05s linear;
+}
 pre#log {
   margin: 0; max-height: 200px; overflow: auto; font-size: 11px;
   color: var(--muted); white-space: pre-wrap;

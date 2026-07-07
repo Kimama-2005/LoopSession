@@ -37,13 +37,18 @@ function wireSession() {
     const rec = state === "recording" || state === "armed";
     $("btnRec").classList.toggle("recording", rec);
   };
+  session.audio.onLevel = (peak) => {
+    $("levelBar").style.width = Math.min(100, peak * 140).toFixed(0) + "%";
+  };
 }
 
 // 相手なしでメトロノーム＋ルーパーを動かすソロモード
 function startSolo() {
   if (session) return;
   const audio = ensureAudio();
-  const stub = { send() {}, onMessage() {}, onOpen() {}, onState() {} };
+  const stub = {
+    send() {}, sendAudio() {}, onMessage() {}, onAudio() {}, onOpen() {}, onState() {},
+  };
   session = new Session("host", stub, audio);
   wireSession();
   session.setConfig({
@@ -115,6 +120,50 @@ function setInstrument(mode) {
     b.classList.toggle("active", b.dataset.mode === mode)
   );
   relabelKeyboard(mode);
+}
+
+// ---- オーディオ ----
+async function refreshAudioDevices() {
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const sel = $("audioDevice");
+    const cur = sel.value;
+    sel.innerHTML = "";
+    devs
+      .filter((d) => d.kind === "audioinput")
+      .forEach((d, i) => {
+        const o = document.createElement("option");
+        o.value = d.deviceId;
+        o.textContent = d.label || "入力 " + (i + 1);
+        sel.appendChild(o);
+      });
+    if (cur) sel.value = cur;
+  } catch (e) {
+    /* enumerateDevices 非対応/不許可時は無視 */
+  }
+}
+
+async function toggleAudio() {
+  if (!session) startSolo(); // 未接続なら自動でソロ開始
+  const link = session.audio;
+  if (!link.enabled) {
+    try {
+      await link.enable($("audioDevice").value || undefined);
+      $("btnAudio").textContent = "⏹ 音声オフ";
+      $("btnAudio").classList.add("on");
+      $("audioStatus").textContent =
+        "入力キャプチャ中 — 相手へ1小節遅れで送信（ヘッドホン推奨）";
+      refreshAudioDevices(); // 許可後はラベルが取得できる
+    } catch (e) {
+      $("audioStatus").textContent = "マイク/入力の取得に失敗: " + e.message;
+    }
+  } else {
+    link.disable();
+    $("btnAudio").textContent = "🎤 音声オン";
+    $("btnAudio").classList.remove("on");
+    $("audioStatus").textContent = "停止しました";
+    $("levelBar").style.width = "0%";
+  }
 }
 
 // ---- 鍵盤 UI ----
@@ -198,6 +247,11 @@ function boot() {
   $("btnClear").onclick = () => {
     if (session) session.clearLoop();
   };
+
+  // オーディオ
+  refreshAudioDevices();
+  $("btnAudioRefresh").onclick = refreshAudioDevices;
+  $("btnAudio").onclick = toggleAudio;
 
   initKeyboard((on, note) => play(note, on));
   initMidi(

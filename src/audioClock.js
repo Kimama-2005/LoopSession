@@ -31,4 +31,11 @@ export class AudioClock {
   hostToAudio(hostMs) {
     return this.localPerfToAudio(hostMs - this.hostOffset);
   }
+
+  // audioTime(秒) → 共有タイムライン上の時刻(ms)。音声キャプチャの時刻付けに使う。
+  audioToHost(audioSec) {
+    return (
+      this.anchorPerf + (audioSec - this.anchorAudio) * 1000 + this.hostOffset
+    );
+  }
 }
