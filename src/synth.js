@@ -73,6 +73,13 @@ export class Synth {
     v.osc.stop(when + 0.6);
   }
 
+  // 指定プレフィックスの発音中ボイスを全て解放（例: "LP"=ループ再生音）
+  releaseAll(prefix, when) {
+    for (const id of [...this.voices.keys()]) {
+      if (!prefix || id.startsWith(prefix)) this.noteOff(id, when);
+    }
+  }
+
   // メトロノーム
   click(when, accent) {
     const osc = this.ctx.createOscillator();

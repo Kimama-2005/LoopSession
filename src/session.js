@@ -180,11 +180,39 @@ export class Session {
 
   // ループ長を変更（内容があるとズレるためクリア）
   setLoopBars(n) {
+    this._stopLoopPlayback();
     this.loop.bars = n;
     this.loop.events = [];
     this.loop.playing = false;
     this.loop.recState = "idle";
     this._emitLoop("空");
+  }
+
+  // ループ停止時の後始末。持続音(Keys/Bass)は noteOff がまだ発火していない場合に
+  // 鳴り続けるため、ローカルの LP ボイスを解放し、相手にも取り残された音の
+  // note-off を送る（送信済み先読み分より後ろに置いて順序逆転を防ぐ）。
+  _stopLoopPlayback() {
+    this.synth.releaseAll("LP", this.clock.ctx.currentTime);
+    if (!this.config) return;
+    const distinct = new Map(); // instrument+note -> {note, instrument}
+    for (const ev of this.loop.events) {
+      if (ev.on && ev.instrument !== "drums")
+        distinct.set(ev.instrument + ev.note, ev);
+    }
+    if (distinct.size === 0) return;
+    const cleanupHost = Math.max(this.loopSchedUpTo, this.clock.hostNow()) + 1;
+    const { bar, pos } = this.position(cleanupHost);
+    for (const ev of distinct.values()) {
+      this.conn.send({
+        type: "note",
+        on: false,
+        note: ev.note,
+        velocity: 0,
+        instrument: ev.instrument,
+        barIndex: bar,
+        posInBar: pos,
+      });
+    }
   }
 
   // 録音を予約。次のループ境界から loopBars 小節ぶん記録する。
@@ -202,6 +230,7 @@ export class Session {
   }
 
   clearLoop() {
+    this._stopLoopPlayback();
     this.loop.events = [];
     this.loop.playing = false;
     this.loop.recState = "idle";
