@@ -1,32 +1,49 @@
-// 入力音声(モノラル)をまとめて main スレッドへ渡すだけの最小 AudioWorklet。
-// バー分割や送信は main 側(audio.js)で行う。各バッチには先頭サンプルの
-// audioContext 時刻(time)を添えるので、共有時計へ変換して1小節遅延を計算できる。
+// 入力キャプチャ用 AudioWorklet。
+// 約1024フレームずつまとめ、コンテキスト全体のフレーム番号付きで
+// メインスレッドへ送る（録音とレベルメーター双方の共用ソース）。
+const BATCH = 1024;
+
 class CaptureProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.batch = 2048; // まとめて送るサンプル数(~43ms @48k)
-    this.buf = new Float32Array(this.batch);
-    this.fill = 0;
-    this.startTime = null; // buf[0] に対応する audioContext 時刻(秒)
+    this.channels = 1;
+    this.filled = 0;
+    this.startFrame = 0;
+    this.b0 = new Float32Array(BATCH);
+    this.b1 = new Float32Array(BATCH);
+  }
+
+  flush() {
+    if (this.filled === 0) return;
+    const ch0 = this.b0.slice(0, this.filled);
+    const ch1 = this.channels > 1 ? this.b1.slice(0, this.filled) : null;
+    const transfer = ch1 ? [ch0.buffer, ch1.buffer] : [ch0.buffer];
+    this.port.postMessage(
+      { frame: this.startFrame, frames: this.filled, channels: this.channels, ch0, ch1 },
+      transfer
+    );
+    this.filled = 0;
   }
 
   process(inputs) {
     const input = inputs[0];
-    if (!input || !input[0]) return true;
-    const ch = input[0]; // channel 0 のみ(モノラル)
-    if (this.startTime === null) this.startTime = currentTime;
-    for (let i = 0; i < ch.length; i++) {
-      this.buf[this.fill++] = ch[i];
-      if (this.fill === this.batch) {
-        const chunk = this.buf; // 転送するので新しいバッファに差し替え
-        this.port.postMessage({ time: this.startTime, samples: chunk }, [chunk.buffer]);
-        this.buf = new Float32Array(this.batch);
-        this.fill = 0;
-        this.startTime += this.batch / sampleRate;
-      }
+    if (!input || input.length === 0) {
+      this.flush();
+      return true;
     }
+    const n = input[0].length;
+    const channels = Math.min(input.length, 2);
+    if (channels !== this.channels) {
+      this.flush();
+      this.channels = channels;
+    }
+    if (this.filled === 0) this.startFrame = currentFrame;
+    this.b0.set(input[0], this.filled);
+    if (channels > 1) this.b1.set(input[1], this.filled);
+    this.filled += n;
+    if (this.filled >= BATCH) this.flush();
     return true;
   }
 }
 
-registerProcessor("capture", CaptureProcessor);
+registerProcessor('capture', CaptureProcessor);

@@ -1,287 +1,765 @@
-import { PeerConnection } from "./connection.js";
-import { Session } from "./session.js";
-import { Synth } from "./synth.js";
-import { initKeyboard, initMidi, KEYMAP } from "./input.js";
-import { DRUM_MAP } from "./drums.js";
+// LoopSession — P2P オンラインルーパー
+// アプリ全体の配線: UI・トラック管理・P2P プロトコル。
+//
+// 同期の考え方: リアルタイム送信はせず、録音が完了したループ(PCM)を
+// DataChannel で転送し、受信側が共有クロックのグリッドへ位相整列して再生する。
+// これによりネットワーク遅延はループ到着の遅れ（次の周回で吸収）にしかならない。
+
+import { SharedClock, AudioEngine } from './engine.js';
+import { Track } from './track.js';
+import { P2P, encodePcm16, decodePcm16 } from './p2p.js';
+import { InstrumentHost, PLUGIN_PRESETS, initMidi, PcKeyboard } from './instrument.js';
 
 const $ = (id) => document.getElementById(id);
-function log(s) {
-  const el = $("log");
-  el.textContent = `[${new Date().toLocaleTimeString()}] ${s}\n` + el.textContent;
-}
 
-let ctx = null;
-let conn = null;
-let session = null;
-let previewSynth = null; // 接続前の試聴用
-let currentInstrument = "keys";
-let loopBarsPref = 1;
+const TRACK_COLORS = ['#ff5e5b', '#ffb400', '#37d67a', '#4bb8ff', '#b98cff', '#ff7ad9'];
+const START_LEAD_MS = 300; // トランスポート開始の先読み（相手への伝搬猶予）
 
-function ensureAudio() {
-  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
-  if (ctx.state === "suspended") ctx.resume();
-  return ctx;
-}
+const clock = new SharedClock();
+const engine = new AudioEngine(clock);
+const p2p = new P2P(clock);
 
-function wireSession() {
-  session.instrument = currentInstrument;
-  session.loop.bars = loopBarsPref;
-  session.onLog = log;
-  session.onSync = () => {
-    $("syncInfo").textContent = `同期: offset ${session.clock.hostOffset.toFixed(0)}ms / rtt ${session.bestRtt.toFixed(0)}ms`;
-  };
-  session.onRemoteNote = (on, note) => highlight(note, on);
-  session.onLoopNote = (on, note) => highlight(note, on);
-  session.onLoopState = (state, label) => {
-    $("loopState").textContent = "ループ: " + label;
-    const rec = state === "recording" || state === "armed";
-    $("btnRec").classList.toggle("recording", rec);
-  };
-  session.audio.onLevel = (peak) => {
-    $("levelBar").style.width = Math.min(100, peak * 140).toFixed(0) + "%";
-  };
-}
+const myPeerId = Math.random().toString(16).slice(2, 6);
+let myName = localStorage.getItem('ls-name') || `Player-${myPeerId}`;
+let peerName = null;
+let trackSeq = 0;
+let colorSeq = 0;
 
-// 相手なしでメトロノーム＋ルーパーを動かすソロモード
-function startSolo() {
-  if (session) return;
-  const audio = ensureAudio();
-  const stub = {
-    send() {}, sendAudio() {}, onMessage() {}, onAudio() {}, onOpen() {}, onState() {},
-  };
-  session = new Session("host", stub, audio);
-  wireSession();
-  session.setConfig({
-    bpm: Number($("bpm").value) || 120,
-    beatsPerBar: Number($("beats").value) || 4,
-    delayBars: Number($("delay").value) || 1,
-    sessionStart: performance.now(),
-  });
-  session.startTransport();
-  $("status").textContent = "ソロ (メトロノーム動作中)";
-  log("ソロ開始");
-}
+// trackId -> { track, el, canvas, playhead, recShade, emptyLabel, ... }
+const tracks = new Map();
 
-// ---- ホスト ----
-async function startHost() {
-  const audio = ensureAudio();
-  conn = new PeerConnection();
-  session = new Session("host", conn, audio);
-  wireSession();
-  conn.onState = (s) => log("connection: " + s);
-  conn.onOpen = () => {
-    log("data channel open");
-    const cfg = {
-      bpm: Number($("bpm").value) || 120,
-      beatsPerBar: Number($("beats").value) || 4,
-      delayBars: Number($("delay").value) || 1,
-      sessionStart: performance.now(),
-    };
-    session.setConfig(cfg);
-    session.startTransport();
-    $("status").textContent = "接続済み (ホスト)";
-  };
-  const offer = await conn.createOffer();
-  $("offerOut").value = offer;
-  log("オファー生成 — 相手に送ってください");
-}
+// ───────────────────────── 起動 ─────────────────────────
 
-async function acceptAnswer() {
-  if (!conn) return alert("先にオファーを作成してください");
-  const code = $("answerIn").value.trim();
-  if (!code) return alert("相手のアンサーを貼ってください");
-  await conn.acceptAnswer(code);
-  log("アンサー取り込み — 接続中…");
-}
-
-// ---- 参加者 ----
-async function startClient() {
-  const audio = ensureAudio();
-  conn = new PeerConnection();
-  session = new Session("client", conn, audio);
-  wireSession();
-  conn.onState = (s) => log("connection: " + s);
-  conn.onOpen = () => {
-    log("data channel open");
-    $("status").textContent = "接続済み (参加者) — 同期中…";
-  };
-  const offer = $("offerIn").value.trim();
-  if (!offer) return alert("ホストのオファーを貼ってください");
-  const answer = await conn.createAnswer(offer);
-  $("answerOut").value = answer;
-  log("アンサー生成 — ホストに送り返してください");
-}
-
-// ---- 楽器モード ----
-function setInstrument(mode) {
-  currentInstrument = mode;
-  if (session) session.instrument = mode;
-  document.querySelectorAll("#modes .mode").forEach((b) =>
-    b.classList.toggle("active", b.dataset.mode === mode)
-  );
-  relabelKeyboard(mode);
-}
-
-// ---- オーディオ ----
-async function refreshAudioDevices() {
+$('startBtn').addEventListener('click', async () => {
+  $('startBtn').disabled = true;
   try {
-    const devs = await navigator.mediaDevices.enumerateDevices();
-    const sel = $("audioDevice");
-    const cur = sel.value;
-    sel.innerHTML = "";
-    devs
-      .filter((d) => d.kind === "audioinput")
-      .forEach((d, i) => {
-        const o = document.createElement("option");
-        o.value = d.deviceId;
-        o.textContent = d.label || "入力 " + (i + 1);
-        sel.appendChild(o);
-      });
-    if (cur) sel.value = cur;
-  } catch (e) {
-    /* enumerateDevices 非対応/不許可時は無視 */
+    await engine.init();
+  } catch (err) {
+    alert('オーディオの初期化に失敗しました: ' + err.message);
+    return;
   }
-}
+  $('startOverlay').remove();
+  initTransportUI();
+  initConnUI();
+  initSettingsUI();
+  initSynthUI();
+  await initInput();
+  addLocalTrack();
+  requestAnimationFrame(rafLoop);
+});
 
-async function toggleAudio() {
-  if (!session) startSolo(); // 未接続なら自動でソロ開始
-  const link = session.audio;
-  if (!link.enabled) {
+// ───────────────────────── 入力 ─────────────────────────
+
+async function initInput() {
+  try {
+    await engine.selectInput(null);
+    warnInput('');
+  } catch (err) {
+    warnInput('入力デバイスを開けませんでした（権限拒否 or 未接続）。受信・再生のみ可能です。');
+  }
+  await refreshDevices();
+  navigator.mediaDevices.addEventListener('devicechange', refreshDevices);
+
+  $('deviceSel').addEventListener('change', async () => {
     try {
-      await link.enable($("audioDevice").value || undefined);
-      $("btnAudio").textContent = "⏹ 音声オフ";
-      $("btnAudio").classList.add("on");
-      $("audioStatus").textContent =
-        "入力キャプチャ中 — 相手へ1小節遅れで送信（ヘッドホン推奨）";
-      refreshAudioDevices(); // 許可後はラベルが取得できる
-    } catch (e) {
-      $("audioStatus").textContent = "マイク/入力の取得に失敗: " + e.message;
+      await engine.selectInput($('deviceSel').value);
+      warnInput('');
+    } catch (err) {
+      warnInput('このデバイスを開けませんでした: ' + err.message);
     }
-  } else {
-    link.disable();
-    $("btnAudio").textContent = "🎤 音声オン";
-    $("btnAudio").classList.remove("on");
-    $("audioStatus").textContent = "停止しました";
-    $("levelBar").style.width = "0%";
+    updateLatencyLabel();
+  });
+
+  $('monitorBtn').addEventListener('click', () => {
+    const on = $('monitorBtn').classList.toggle('on');
+    engine.setMonitor(on);
+  });
+}
+
+async function refreshDevices() {
+  const sel = $('deviceSel');
+  const devices = await engine.listInputs();
+  sel.innerHTML = '';
+  devices.forEach((d, i) => {
+    const opt = document.createElement('option');
+    opt.value = d.deviceId;
+    opt.textContent = d.label || `入力デバイス ${i + 1}`;
+    sel.appendChild(opt);
+  });
+  if (engine.inputDeviceId) sel.value = engine.inputDeviceId;
+}
+
+function warnInput(text) {
+  const el = $('inputWarn');
+  el.textContent = text;
+  el.hidden = !text;
+}
+
+// ─────────────────────── トランスポート ───────────────────────
+
+function initTransportUI() {
+  $('playBtn').addEventListener('click', () => startTransport(true));
+  $('stopBtn').addEventListener('click', () => stopTransport(true));
+
+  $('bpmInput').addEventListener('change', () => {
+    const v = Math.min(240, Math.max(40, Math.round(+$('bpmInput').value) || 100));
+    if (!tryChangeTempo(v, engine.beatsPerBar)) $('bpmInput').value = engine.bpm;
+  });
+  $('meterSel').addEventListener('change', () => {
+    if (!tryChangeTempo(engine.bpm, +$('meterSel').value)) $('meterSel').value = engine.beatsPerBar;
+  });
+
+  $('metroBtn').addEventListener('click', () => {
+    engine.setMetronome($('metroBtn').classList.toggle('on'));
+  });
+
+  engine.addEventListener('transport', onTransportChange);
+
+  $('bpmInput').value = engine.bpm;
+  rebuildLeds();
+}
+
+function startTransport(broadcast) {
+  if (engine.running) return;
+  engine.start(clock.now() + START_LEAD_MS);
+  if (broadcast) p2p.send({ t: 'transport', running: true, startShared: engine.startShared });
+}
+
+function stopTransport(broadcast) {
+  if (!engine.running) return;
+  engine.stop();
+  if (broadcast) p2p.send({ t: 'transport', running: false });
+}
+
+function onTransportChange() {
+  $('playBtn').classList.toggle('active', engine.running);
+  $('posDisplay').classList.toggle('stopped', !engine.running);
+  for (const { track } of tracks.values()) {
+    if (engine.running) track.onTransportStart();
+    else track.onTransportStop();
+  }
+  if (!engine.running) {
+    $('posDisplay').textContent = '--.-';
+    for (const led of $('beatLeds').children) led.className = '';
   }
 }
 
-// ---- 鍵盤 UI ----
-const noteToEl = new Map();
-const BLACKS = new Set([61, 63, 66, 68, 70]);
-
-function buildKeyboard() {
-  const kb = $("keyboard");
-  const entries = Object.entries(KEYMAP).sort((a, b) => a[1] - b[1]);
-  for (const [key, note] of entries) {
-    const el = document.createElement("div");
-    el.className = "key" + (BLACKS.has(note) ? " black" : "");
-    el.textContent = key.toUpperCase();
-    el.dataset.note = note;
-    el.dataset.key = key;
-    el.addEventListener("mousedown", () => play(note, true));
-    el.addEventListener("mouseup", () => play(note, false));
-    el.addEventListener("mouseleave", () => play(note, false));
-    kb.appendChild(el);
-    noteToEl.set(note, el);
+// テンポ変更は停止中のみ。既存ループは無効になるため確認して全消去する。
+function tryChangeTempo(bpm, beatsPerBar) {
+  if (engine.running) return false;
+  if (bpm === engine.bpm && beatsPerBar === engine.beatsPerBar) return true;
+  const hasLoops = [...tracks.values()].some((e) => e.track.layers.length);
+  if (hasLoops && !confirm('テンポ/拍子を変えると全ループを消去します。よろしいですか？')) {
+    return false;
   }
-  relabelKeyboard(currentInstrument);
+  applyTempo({ bpm, beatsPerBar }, hasLoops);
+  p2p.send({ t: 'bpm', bpm, beatsPerBar });
+  return true;
 }
 
-function relabelKeyboard(mode) {
-  const drums = mode === "drums";
-  noteToEl.forEach((el, note) => {
-    if (drums) {
-      const p = DRUM_MAP.get(note);
-      el.textContent = p ? p.label : "";
-      el.classList.remove("black");
-      el.classList.add("drum");
+function applyTempo({ bpm, beatsPerBar }, clearLoops) {
+  engine.bpm = bpm;
+  engine.beatsPerBar = beatsPerBar;
+  $('bpmInput').value = bpm;
+  $('meterSel').value = beatsPerBar;
+  rebuildLeds();
+  if (clearLoops) for (const { track } of tracks.values()) track.clear();
+}
+
+function rebuildLeds() {
+  const leds = $('beatLeds');
+  leds.innerHTML = '';
+  for (let i = 0; i < engine.beatsPerBar; i++) leds.appendChild(document.createElement('i'));
+}
+
+// ─────────────────────── トラック ───────────────────────
+
+$('addTrackBtn').addEventListener('click', () => addLocalTrack());
+
+function addLocalTrack() {
+  const id = `${myPeerId}-T${++trackSeq}`;
+  const track = new Track(engine, {
+    id,
+    ownerId: myPeerId,
+    name: `TRACK ${trackSeq}`,
+    lengthBars: 2,
+    remote: false,
+  });
+  buildTrackRow(track);
+  p2p.send({ t: 'track-add', trackId: id, name: track.name, lengthBars: track.lengthBars });
+  return tracks.get(id);
+}
+
+function createRemoteTrack({ trackId, name, lengthBars }) {
+  const track = new Track(engine, {
+    id: trackId,
+    ownerId: trackId.split('-')[0],
+    name: name || 'REMOTE',
+    lengthBars: lengthBars || 2,
+    remote: true,
+  });
+  buildTrackRow(track);
+  return tracks.get(trackId);
+}
+
+function buildTrackRow(track) {
+  const color = TRACK_COLORS[colorSeq++ % TRACK_COLORS.length];
+  const el = document.createElement('div');
+  el.className = 'track' + (track.remote ? ' remote' : '');
+  el.style.setProperty('--tcolor', color);
+  el.innerHTML = `
+    <div class="colorStrip"></div>
+    <div class="body">
+      <div class="trackHead">
+        <span class="tname"></span>
+        <span class="towner"></span>
+        <select class="tlen" title="ループ長">
+          <option value="1">1小節</option>
+          <option value="2">2小節</option>
+          <option value="4">4小節</option>
+          <option value="8">8小節</option>
+        </select>
+        <span class="tstate">EMPTY</span>
+        ${track.remote ? '' : '<button class="tdel" title="トラック削除">✕</button>'}
+      </div>
+      <div class="wave">
+        <canvas></canvas>
+        <div class="waveEmpty">NO LOOP</div>
+        <div class="recShade"></div>
+        <div class="playhead"></div>
+      </div>
+      <div class="tctl">
+        ${track.remote ? '' : `
+        <button class="trec" title="録音/オーバーダブ（次の小節頭から開始）">●</button>
+        <button class="tundo" title="最後のレイヤーを取り消し">UNDO</button>
+        <button class="tclear">CLEAR</button>`}
+        <button class="tmute" title="ミュート">M</button>
+        <input class="tvol" type="range" min="0" max="1.2" step="0.01" value="0.9" title="音量">
+      </div>
+    </div>`;
+
+  el.querySelector('.tname').textContent = track.name;
+  el.querySelector('.towner').textContent = track.remote ? (peerName || 'PEER') : 'YOU';
+  el.querySelector('.tlen').value = track.lengthBars;
+
+  const entry = {
+    track,
+    el,
+    color,
+    canvas: el.querySelector('canvas'),
+    playhead: el.querySelector('.playhead'),
+    recShade: el.querySelector('.recShade'),
+    emptyLabel: el.querySelector('.waveEmpty'),
+    stateEl: el.querySelector('.tstate'),
+    lenSel: el.querySelector('.tlen'),
+    recBtn: el.querySelector('.trec'),
+    undoBtn: el.querySelector('.tundo'),
+    clearBtn: el.querySelector('.tclear'),
+    muteBtn: el.querySelector('.tmute'),
+  };
+  tracks.set(track.id, entry);
+  $('tracks').appendChild(el);
+
+  // ── 操作（自分のトラックのみ録音系あり） ──
+  entry.lenSel.addEventListener('change', () => {
+    if (track.setLengthBars(+entry.lenSel.value)) {
+      if (!track.remote) p2p.send({ t: 'track-len', trackId: track.id, lengthBars: track.lengthBars });
     } else {
-      el.textContent = el.dataset.key.toUpperCase();
-      el.classList.remove("drum");
-      el.classList.toggle("black", BLACKS.has(note));
+      entry.lenSel.value = track.lengthBars;
     }
   });
+
+  entry.muteBtn.addEventListener('click', () => {
+    track.setMuted(entry.muteBtn.classList.toggle('on'));
+  });
+
+  el.querySelector('.tvol').addEventListener('input', (e) => track.setGain(+e.target.value));
+
+  if (!track.remote) {
+    entry.recBtn.addEventListener('click', () => {
+      if (!engine.hasInput() && !(instrument && instrument.active)) {
+        warnInput('録音にはライン入力（INPUT）かプラグイン音源（音源）が必要です。');
+        return;
+      }
+      if (!engine.running) {
+        startTransport(true);
+        track.arm(1); // 小節0はカウントイン
+      } else {
+        track.toggleRecord();
+      }
+    });
+    entry.undoBtn.addEventListener('click', () => {
+      const layer = track.undo();
+      if (layer) p2p.send({ t: 'layer-remove', trackId: track.id, layerId: layer.id });
+    });
+    entry.clearBtn.addEventListener('click', () => {
+      track.clear();
+      p2p.send({ t: 'track-clear', trackId: track.id });
+    });
+    el.querySelector('.tdel').addEventListener('click', () => {
+      if (track.layers.length && !confirm(`${track.name} を削除しますか？`)) return;
+      removeTrack(track.id);
+      p2p.send({ t: 'track-remove', trackId: track.id });
+    });
+
+    track.addEventListener('recorded', (e) => sendLayer(track, e.detail.layer));
+  }
+
+  track.addEventListener('layers', () => {
+    drawWave(entry);
+    updateTrackCtl(entry);
+  });
+  track.addEventListener('change', () => updateTrackCtl(entry));
+
+  drawWave(entry);
+  updateTrackCtl(entry);
+  return entry;
 }
 
-function highlight(note, on) {
-  const el = noteToEl.get(note);
-  if (el) el.classList.toggle("on", on);
+function removeTrack(trackId) {
+  const entry = tracks.get(trackId);
+  if (!entry) return;
+  entry.track.dispose();
+  entry.el.remove();
+  tracks.delete(trackId);
 }
 
-function play(note, on) {
-  highlight(note, on);
-  if (session && session.config) {
-    session.localNote(on, note, on ? 100 : 0);
-  } else {
-    // 接続前の試聴（自分だけ鳴らす）
-    const audio = ensureAudio();
-    if (!previewSynth) previewSynth = new Synth(audio);
-    const when = audio.currentTime + 0.01;
-    const opts = { instrument: currentInstrument, pan: 0 };
-    if (on) previewSynth.noteOn("P" + note, note, 100, when, opts);
-    else previewSynth.noteOff("P" + note, when);
+function updateTrackCtl(entry) {
+  const t = entry.track;
+  const st = entry.stateEl;
+  st.className = 'tstate';
+  if (t.state === 'empty') st.textContent = 'EMPTY';
+  else if (t.state === 'armed') { st.textContent = 'ARMED'; st.classList.add('armed'); }
+  else if (t.state === 'recording') { st.textContent = 'REC'; st.classList.add('rec'); }
+  else { st.textContent = `PLAY ×${t.layers.length}`; st.classList.add('play'); }
+
+  entry.lenSel.disabled = t.remote || t.layers.length > 0 || t.state !== 'empty';
+  if (!t.remote) {
+    entry.recBtn.className = 'trec' +
+      (t.state === 'armed' ? ' armed' : t.state === 'recording' ? ' recording' : '');
+    entry.undoBtn.disabled = !t.layers.length;
+    entry.clearBtn.disabled = !t.layers.length && t.state === 'empty';
   }
 }
 
-// ---- 起動 ----
-function boot() {
-  buildKeyboard();
-  $("btnHost").onclick = startHost;
-  $("btnClient").onclick = startClient;
-  $("btnAccept").onclick = acceptAnswer;
-  document.querySelectorAll("#modes .mode").forEach((b) => {
-    b.onclick = () => setInstrument(b.dataset.mode);
-  });
+// ─────────────────────── 波形表示 ───────────────────────
 
-  // ルーパー
-  $("btnSolo").onclick = startSolo;
-  $("loopBars").onchange = (e) => {
-    loopBarsPref = Number(e.target.value);
-    if (session) session.setLoopBars(loopBarsPref);
-  };
-  $("btnRec").onclick = () => {
-    if (!session) startSolo(); // 未接続なら自動でソロ開始
-    session.armRecord();
-  };
-  $("btnClear").onclick = () => {
-    if (session) session.clearLoop();
-  };
+function drawWave(entry) {
+  const { track, canvas } = entry;
+  const dpr = devicePixelRatio || 1;
+  const w = (canvas.width = Math.max(1, Math.round(canvas.clientWidth * dpr)));
+  const h = (canvas.height = Math.max(1, Math.round(canvas.clientHeight * dpr)));
+  const g = canvas.getContext('2d');
+  g.clearRect(0, 0, w, h);
+  entry.emptyLabel.style.display = track.layers.length ? 'none' : '';
 
-  // オーディオ
-  refreshAudioDevices();
-  $("btnAudioRefresh").onclick = refreshAudioDevices;
-  $("btnAudio").onclick = toggleAudio;
+  // 小節の区切り線
+  g.strokeStyle = 'rgba(255,255,255,0.08)';
+  g.lineWidth = 1;
+  for (let b = 1; b < track.lengthBars; b++) {
+    const x = Math.round((b / track.lengthBars) * w) + 0.5;
+    g.beginPath();
+    g.moveTo(x, 0);
+    g.lineTo(x, h);
+    g.stroke();
+  }
+  if (!track.layers.length) return;
 
-  initKeyboard((on, note) => play(note, on));
-  initMidi(
-    (on, note, vel) => {
-      highlight(note, on);
-      if (session && session.config) session.localNote(on, note, vel);
-      else {
-        const audio = ensureAudio();
-        if (!previewSynth) previewSynth = new Synth(audio);
-        const when = audio.currentTime + 0.01;
-        const opts = { instrument: currentInstrument, pan: 0 };
-        if (on) previewSynth.noteOn("P" + note, note, vel, when, opts);
-        else previewSynth.noteOff("P" + note, when);
+  const peaks = new Float32Array(w);
+  for (const layer of track.layers) {
+    for (let c = 0; c < layer.buffer.numberOfChannels; c++) {
+      const data = layer.buffer.getChannelData(c);
+      const spc = data.length / w;
+      const step = Math.max(1, Math.floor(spc / 64));
+      for (let x = 0; x < w; x++) {
+        let peak = 0;
+        const end = Math.min(data.length, Math.floor((x + 1) * spc));
+        for (let i = Math.floor(x * spc); i < end; i += step) {
+          const v = Math.abs(data[i]);
+          if (v > peak) peak = v;
+        }
+        if (peak > peaks[x]) peaks[x] = peak;
       }
-    },
-    (names) => {
-      if (names === null) $("midiInfo").textContent = "MIDI: 非対応ブラウザ";
-      else if (names.length === 0) $("midiInfo").textContent = "MIDI: デバイスなし";
-      else $("midiInfo").textContent = "MIDI: " + names.join(", ");
     }
-  );
-
-  const raf = () => {
-    if (session && session.config) {
-      const p = session.position(session.clock.hostNow());
-      $("meter").textContent = `bar ${p.bar}  beat ${p.beat + 1}/${session.config.beatsPerBar}`;
-    }
-    requestAnimationFrame(raf);
-  };
-  raf();
+  }
+  g.fillStyle = entry.color;
+  g.globalAlpha = 0.85;
+  const mid = h / 2;
+  for (let x = 0; x < w; x++) {
+    const y = Math.max(1, peaks[x] * mid);
+    g.fillRect(x, mid - y, 1, y * 2);
+  }
+  g.globalAlpha = 1;
 }
 
-boot();
+// ─────────────────────── 画面更新ループ ───────────────────────
+
+function rafLoop() {
+  requestAnimationFrame(rafLoop);
+  // 入力メーター
+  $('inputMeter').style.width = `${Math.min(1, engine.inputPeak) * 100}%`;
+
+  // 小節.拍 表示と LED
+  if (engine.running) {
+    const pos = engine.posBars();
+    if (pos >= 0) {
+      const beat = Math.floor((pos % 1) * engine.beatsPerBar);
+      $('posDisplay').textContent = `${Math.floor(pos) + 1}.${beat + 1}`;
+      const leds = $('beatLeds').children;
+      for (let i = 0; i < leds.length; i++) {
+        leds[i].className = i === beat ? (beat === 0 ? 'hit head' : 'hit') : '';
+      }
+    }
+  }
+
+  // トラックのプレイヘッド・録音進捗
+  for (const entry of tracks.values()) {
+    const t = entry.track;
+    if (t.state === 'recording') {
+      const prog = Math.min(1, Math.max(0, (engine.posBars() - t.recStartBar) / t.lengthBars));
+      entry.recShade.style.display = 'block';
+      entry.recShade.style.width = `${prog * 100}%`;
+    } else {
+      entry.recShade.style.display = 'none';
+    }
+    const p = engine.running ? t.playPos() : null;
+    if (p != null) {
+      entry.playhead.style.display = 'block';
+      entry.playhead.style.left = `${p * 100}%`;
+    } else {
+      entry.playhead.style.display = 'none';
+    }
+  }
+}
+
+// ─────────────────────── P2P 配線 ───────────────────────
+
+function initConnUI() {
+  $('nameInput').value = myName;
+  $('nameInput').addEventListener('change', () => {
+    myName = $('nameInput').value.trim() || myName;
+    localStorage.setItem('ls-name', myName);
+    p2p.send({ t: 'hello', peerId: myPeerId, name: myName, quiet: true });
+  });
+
+  $('makeOfferBtn').addEventListener('click', async () => {
+    setConnStatus('オファー作成中…（数秒かかることがあります）');
+    try {
+      $('localSig').value = await p2p.createOffer();
+      setConnStatus('コードを相手に送り、返ってきたコードを下に貼って「受け取る」。');
+    } catch (err) {
+      setConnStatus('失敗: ' + err.message, 'err');
+    }
+  });
+
+  $('acceptSigBtn').addEventListener('click', async () => {
+    const text = $('remoteSig').value.trim();
+    if (!text) return;
+    try {
+      const answer = await p2p.acceptRemote(text);
+      if (answer) {
+        $('localSig').value = answer;
+        setConnStatus('応答コードを相手に送ってください。接続を待っています…', 'ok');
+      } else {
+        setConnStatus('接続中…', 'ok');
+      }
+    } catch (err) {
+      setConnStatus('コードを読めませんでした: ' + err.message, 'err');
+    }
+  });
+
+  $('copySigBtn').addEventListener('click', async () => {
+    if (!$('localSig').value) return;
+    await navigator.clipboard.writeText($('localSig').value);
+    $('copySigBtn').textContent = 'コピーしました';
+    setTimeout(() => ($('copySigBtn').textContent = 'コピー'), 1200);
+  });
+
+  p2p.addEventListener('status', updateBadge);
+  p2p.addEventListener('open', onPeerOpen);
+  p2p.addEventListener('msg', (e) => handleMsg(e.detail));
+  p2p.addEventListener('loop', (e) => handleLoop(e.detail));
+}
+
+function setConnStatus(text, cls = '') {
+  const el = $('connStatus');
+  el.textContent = text;
+  el.className = 'connStatus ' + cls;
+}
+
+function updateBadge() {
+  const badge = $('connBadge');
+  if (p2p.connected) {
+    badge.textContent = peerName ? `⇄ ${peerName}` : 'LINKED';
+    badge.className = 'badge on';
+  } else {
+    badge.textContent = 'OFFLINE';
+    badge.className = 'badge off';
+    if (peerName) setConnStatus('切断されました。', 'err');
+  }
+}
+
+// DataChannel が開いた（answer 側はクロック同期後に飛んでくる）
+function onPeerOpen() {
+  p2p.send({ t: 'hello', peerId: myPeerId, name: myName });
+  updateBadge();
+  setConnStatus('接続しました！', 'ok');
+}
+
+function handleMsg(m) {
+  switch (m.t) {
+    case 'hello': {
+      peerName = m.name;
+      updateBadge();
+      for (const { el, track } of tracks.values()) {
+        if (track.remote) el.querySelector('.towner').textContent = peerName;
+      }
+      if (m.quiet) return; // 名前変更の再通知
+      sendSnapshot();
+      return;
+    }
+    case 'sync': {
+      // 接続時にオファー側から届くテンポ/トランスポートの現状
+      if (m.bpm !== engine.bpm || m.beatsPerBar !== engine.beatsPerBar) {
+        applyTempo(m, true);
+      }
+      if (m.running) engine.start(m.startShared);
+      return;
+    }
+    case 'transport':
+      if (m.running) engine.start(m.startShared);
+      else engine.stop();
+      return;
+    case 'bpm':
+      applyTempo(m, true);
+      return;
+    case 'track-add':
+      if (!tracks.has(m.trackId)) createRemoteTrack(m);
+      return;
+    case 'track-len': {
+      const entry = tracks.get(m.trackId);
+      if (entry && entry.track.setLengthBars(m.lengthBars)) {
+        entry.lenSel.value = m.lengthBars;
+        drawWave(entry);
+      }
+      return;
+    }
+    case 'track-clear':
+      tracks.get(m.trackId)?.track.clear();
+      return;
+    case 'track-remove':
+      removeTrack(m.trackId);
+      return;
+    case 'layer-remove':
+      tracks.get(m.trackId)?.track.removeLayer(m.layerId);
+      return;
+  }
+}
+
+// 接続直後: オファー側がテンポ/トランスポートを送り、双方が自分のトラックを再送する
+function sendSnapshot() {
+  if (p2p.role === 'offer') {
+    p2p.send({
+      t: 'sync',
+      bpm: engine.bpm,
+      beatsPerBar: engine.beatsPerBar,
+      running: engine.running,
+      startShared: engine.startShared,
+    });
+  }
+  for (const { track } of tracks.values()) {
+    if (track.remote) continue;
+    p2p.send({ t: 'track-add', trackId: track.id, name: track.name, lengthBars: track.lengthBars });
+    for (const layer of track.layers) sendLayer(track, layer);
+  }
+}
+
+function sendLayer(track, layer) {
+  if (!p2p.isOpen()) return;
+  const buf = layer.buffer;
+  const chans = [];
+  for (let c = 0; c < buf.numberOfChannels; c++) chans.push(buf.getChannelData(c));
+  p2p.sendLoop(
+    {
+      trackId: track.id,
+      layerId: layer.id,
+      trackName: track.name,
+      lengthBars: track.lengthBars,
+      phaseBar: layer.phaseBar,
+      sampleRate: buf.sampleRate,
+      channels: buf.numberOfChannels,
+      frames: buf.length,
+    },
+    encodePcm16(chans)
+  );
+}
+
+function handleLoop({ meta, buffer }) {
+  let entry = tracks.get(meta.trackId);
+  if (!entry) {
+    entry = createRemoteTrack({
+      trackId: meta.trackId,
+      name: meta.trackName,
+      lengthBars: meta.lengthBars,
+    });
+  }
+  const track = entry.track;
+  if (track.layers.some((l) => l.id === meta.layerId)) return; // 再送の重複
+  track.lengthBars = meta.lengthBars;
+  entry.lenSel.value = meta.lengthBars;
+  // 送信側のサンプルレートのまま AudioBuffer を作る（再生時に自動リサンプル）
+  const chans = decodePcm16(buffer, meta.channels, meta.frames);
+  const audioBuf = engine.ctx.createBuffer(meta.channels, meta.frames, meta.sampleRate);
+  chans.forEach((d, c) => audioBuf.copyToChannel(d, c));
+  track.addLayer({ id: meta.layerId, buffer: audioBuf, phaseBar: meta.phaseBar });
+}
+
+// ─────────────────────── プラグイン音源 ───────────────────────
+
+let instrument = null;
+let pckb = null;
+let midiReady = false;
+let synthGuiEl = null;
+
+function initSynthUI() {
+  instrument = new InstrumentHost(engine);
+  pckb = new PcKeyboard(instrument);
+  const sel = $('synthSel');
+  sel.appendChild(new Option('なし（ライン入力のみ）', ''));
+  for (const p of PLUGIN_PRESETS) sel.appendChild(new Option(p.name, p.url));
+  sel.appendChild(new Option('カスタムURL…', 'custom'));
+
+  sel.addEventListener('change', () => onSynthSelect(sel.value));
+  instrument.addEventListener('change', updateSynthUI);
+  $('synthVol').addEventListener('input', () => instrument.setGain(+$('synthVol').value));
+  $('pckbBtn').addEventListener('click', () => {
+    pckb.setEnabled($('pckbBtn').classList.toggle('on'));
+  });
+  $('synthGuiBtn').addEventListener('click', toggleSynthGui);
+
+  // 前回の音源を復元（プリセットにある場合のみ）
+  const saved = localStorage.getItem('ls-synth');
+  if (saved && PLUGIN_PRESETS.some((p) => p.url === saved)) {
+    sel.value = saved;
+    onSynthSelect(saved);
+  }
+  updateSynthUI();
+}
+
+async function onSynthSelect(value) {
+  const sel = $('synthSel');
+  hideSynthGui();
+  if (value === 'custom') {
+    const url = (prompt('WAM2 プラグイン (index.js) の URL:') || '').trim();
+    if (!url) {
+      sel.value = instrument.currentUrl || '';
+      return;
+    }
+    sel.insertBefore(new Option(`カスタム: ${url.slice(0, 48)}`, url), sel.lastChild);
+    sel.value = url;
+    value = url;
+  }
+  if (!value) {
+    instrument.unload();
+    localStorage.removeItem('ls-synth');
+    synthWarn('');
+    return;
+  }
+  synthWarn('プラグインを読み込み中…');
+  try {
+    await instrument.load(value);
+    localStorage.setItem('ls-synth', value);
+    synthWarn('');
+    ensureMidi();
+  } catch (err) {
+    synthWarn('読み込み失敗: ' + (err && err.message || err));
+    sel.value = '';
+  }
+}
+
+// WebMIDI は音源を最初に読み込んだときに一度だけ初期化する
+async function ensureMidi() {
+  if (midiReady) return;
+  midiReady = true;
+  try {
+    const access = await initMidi(
+      (bytes) => instrument.midi(bytes),
+      (count) => {
+        $('midiStatus').textContent = count ? `${count}台接続` : 'デバイスなし';
+      }
+    );
+    if (!access) $('midiStatus').textContent = 'このブラウザは未対応';
+  } catch {
+    $('midiStatus').textContent = 'MIDI許可されず';
+  }
+}
+
+function updateSynthUI() {
+  const active = instrument.active;
+  $('synthSel').disabled = instrument.loading;
+  $('synthGuiBtn').disabled = !active;
+  $('pckbBtn').disabled = !active;
+  if (!active) {
+    $('pckbBtn').classList.remove('on');
+    pckb.setEnabled(false);
+  }
+}
+
+async function toggleSynthGui() {
+  const on = $('synthGuiBtn').classList.toggle('on');
+  if (!on) {
+    hideSynthGui();
+    return;
+  }
+  try {
+    synthGuiEl = await instrument.createGui();
+    if (!synthGuiEl) throw new Error('このプラグインにGUIはありません');
+    const box = $('synthGui');
+    box.innerHTML = '';
+    box.appendChild(synthGuiEl);
+    box.hidden = false;
+  } catch (err) {
+    $('synthGuiBtn').classList.remove('on');
+    synthWarn('GUIを開けませんでした: ' + (err && err.message || err));
+  }
+}
+
+function hideSynthGui() {
+  const box = $('synthGui');
+  box.hidden = true;
+  if (synthGuiEl && instrument.instance) {
+    try { instrument.instance.destroyGui?.(synthGuiEl); } catch {}
+  }
+  box.innerHTML = '';
+  synthGuiEl = null;
+  $('synthGuiBtn').classList.remove('on');
+}
+
+function synthWarn(text) {
+  const el = $('synthWarn');
+  el.textContent = text;
+  el.hidden = !text;
+}
+
+// ─────────────────────── 設定 ───────────────────────
+
+function initSettingsUI() {
+  const saved = +localStorage.getItem('ls-latency') || 0;
+  engine.userLatencyMs = saved;
+  $('latencyInput').value = saved;
+  $('latencyInput').addEventListener('change', () => {
+    engine.userLatencyMs = +$('latencyInput').value || 0;
+    localStorage.setItem('ls-latency', engine.userLatencyMs);
+  });
+  $('masterVol').addEventListener('input', () => {
+    engine.master.gain.value = +$('masterVol').value;
+  });
+  updateLatencyLabel();
+}
+
+function updateLatencyLabel() {
+  $('latencyAuto').textContent = `(自動推定 +${Math.round(engine.autoLatencySec() * 1000)}ms)`;
+}
+
+// コンソールからの動作検証用
+window.__ls = { engine, p2p, clock, tracks, get instrument() { return instrument; } };

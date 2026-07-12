@@ -1,125 +1,132 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>LoopSession — 1小節ディレイ合奏プロトタイプ</title>
-  <link rel="stylesheet" href="./style.css" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LoopSession — P2P Looper</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔁</text></svg>">
+  <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-  <header>
-    <h1>LoopSession <small>prototype</small></h1>
-    <p class="tagline">サーバーレスP2P × 1小節ディレイで遅延を気にせず合奏する</p>
-  </header>
+  <div id="app">
 
-  <main>
-    <!-- ============ ① 接続 ============ -->
-    <section class="card">
-      <h2>① 接続（手動シグナリング）</h2>
-      <p class="hint">
-        片方が「ホスト」、もう片方が「参加者」。オファー／アンサーの文字列を
-        チャット等でコピペ交換すればサーバー不要でP2P接続します。
-      </p>
+    <header>
+      <div class="logo">LOOP<span>SESSION</span></div>
+      <div id="connBadge" class="badge off">OFFLINE</div>
+    </header>
 
-      <div class="cols">
-        <!-- Host -->
-        <div class="pane">
-          <h3>ホスト（曲を仕切る側）</h3>
-          <div class="row">
-            <label>BPM <input id="bpm" type="number" value="120" min="40" max="240" /></label>
-            <label>拍子/小節 <input id="beats" type="number" value="4" min="1" max="12" /></label>
-            <label>遅延(小節) <input id="delay" type="number" value="1" min="1" max="4" /></label>
-          </div>
-          <button id="btnHost">1. オファーを作成</button>
-          <label class="fld">オファー（相手に送る）
-            <textarea id="offerOut" readonly placeholder="ここに生成される文字列を相手へ"></textarea>
-          </label>
-          <label class="fld">アンサー（相手から貼る）
-            <textarea id="answerIn" placeholder="相手のアンサーをここに貼る"></textarea>
-          </label>
-          <button id="btnAccept">3. アンサーを取り込む → 接続</button>
+    <!-- トランスポート -->
+    <section id="transport" class="panel">
+      <button id="playBtn" class="tbtn" title="再生">▶</button>
+      <button id="stopBtn" class="tbtn" title="停止">■</button>
+      <div class="field">
+        <input id="bpmInput" type="number" min="40" max="240" step="1" value="100">
+        <label>BPM</label>
+      </div>
+      <div class="field">
+        <select id="meterSel">
+          <option value="3">3/4</option>
+          <option value="4" selected>4/4</option>
+          <option value="6">6/8</option>
+        </select>
+        <label>拍子</label>
+      </div>
+      <button id="metroBtn" class="tbtn toggle on" title="メトロノーム">CLK</button>
+      <div id="posDisplay" class="pos">--.-</div>
+      <div id="beatLeds" class="leds"></div>
+    </section>
+
+    <!-- 入力 -->
+    <section id="inputSec" class="panel">
+      <div class="inputRow">
+        <span class="secLabel">INPUT</span>
+        <select id="deviceSel" title="入力デバイス（オーディオI/F・ループバック等）"></select>
+        <button id="monitorBtn" class="tbtn toggle" title="入力をこのブラウザ経由でモニター（遅延あり。通常はI/F直モニター推奨）">MON</button>
+      </div>
+      <div class="meterWrap"><div id="inputMeter"></div></div>
+      <div id="inputWarn" class="warn" hidden></div>
+    </section>
+
+    <!-- プラグイン音源 (WAM) -->
+    <section id="synthSec" class="panel">
+      <div class="inputRow">
+        <span class="secLabel">音源</span>
+        <select id="synthSel" title="プラグイン音源（WAM）を読み込む"></select>
+        <button id="synthGuiBtn" class="tbtn toggle" title="プラグインのGUIを開閉" disabled>GUI</button>
+      </div>
+      <div class="inputRow synthRow2">
+        <span class="secLabel">MIDI</span>
+        <span id="midiStatus" class="dim">未初期化</span>
+        <button id="pckbBtn" class="tbtn toggle" title="PCキーボードで演奏 (A W S E D... / Z X でオクターブ)" disabled>KEYS</button>
+        <input id="synthVol" type="range" min="0" max="1.2" step="0.01" value="0.8" title="音源の音量">
+      </div>
+      <div id="synthGui" class="synthGui" hidden></div>
+      <div id="synthWarn" class="warn" hidden></div>
+    </section>
+
+    <!-- トラック -->
+    <main id="tracks"></main>
+    <button id="addTrackBtn" class="addTrack">＋ トラック追加</button>
+
+    <!-- 接続 -->
+    <details id="connPanel" class="panel">
+      <summary>P2P 接続</summary>
+      <div class="connBody">
+        <div class="inputRow">
+          <span class="secLabel">名前</span>
+          <input id="nameInput" type="text" maxlength="16">
         </div>
+        <div class="connBtns">
+          <button id="makeOfferBtn">① オファーを作る</button>
+        </div>
+        <div class="sigBlock">
+          <label>自分のコード（相手に送る）</label>
+          <textarea id="localSig" readonly rows="3" placeholder="「オファーを作る」を押すとここに出ます"></textarea>
+          <button id="copySigBtn">コピー</button>
+        </div>
+        <div class="sigBlock">
+          <label>相手のコード（貼り付け）</label>
+          <textarea id="remoteSig" rows="3" placeholder="相手から届いたコードをここに貼る"></textarea>
+          <button id="acceptSigBtn">② 受け取る</button>
+        </div>
+        <div id="connStatus" class="connStatus">未接続。片方が①→コードを相手へ→相手が貼って②→返ってきたコードを貼って②。</div>
+      </div>
+    </details>
 
-        <!-- Client -->
-        <div class="pane">
-          <h3>参加者（招かれる側）</h3>
-          <label class="fld">オファー（相手から貼る）
-            <textarea id="offerIn" placeholder="ホストのオファーをここに貼る"></textarea>
-          </label>
-          <button id="btnClient">2. アンサーを作成</button>
-          <label class="fld">アンサー（相手に送る）
-            <textarea id="answerOut" readonly placeholder="ここに生成される文字列をホストへ"></textarea>
-          </label>
+    <!-- 設定 -->
+    <details id="setPanel" class="panel">
+      <summary>設定</summary>
+      <div class="connBody">
+        <div class="inputRow">
+          <span class="secLabel">録音補正</span>
+          <input id="latencyInput" type="number" step="1" value="0" style="width:70px"> ms
+          <span id="latencyAuto" class="dim"></span>
+        </div>
+        <p class="dim">録音したループが遅れて聞こえる場合はプラスに増やす。自動推定に加算される。</p>
+        <div class="inputRow">
+          <span class="secLabel">マスター</span>
+          <input id="masterVol" type="range" min="0" max="1" step="0.01" value="0.9">
         </div>
       </div>
+    </details>
 
-      <div class="status">
-        <span>状態: <b id="status">未接続</b></span>
-        <span id="syncInfo"></span>
-      </div>
-    </section>
+    <footer class="dim">
+      ソフト音源は2通り: ①「音源」でプラグイン(WAM)を読み込み MIDI/PCキーボードで演奏、
+      ② DAWの音源を使う場合は DAW出力をループバック入力（I/Fのloopback / VoiceMeeter等）に
+      ルーティングして INPUT で選択。ヘッドホン推奨。
+    </footer>
+  </div>
 
-    <!-- ============ ② 演奏 ============ -->
-    <section class="card">
-      <h2>② 演奏</h2>
-      <p class="hint">
-        PCキーボードが鍵盤になります： <code>A W S E D F T G Y H U J K</code>。
-        MIDIキーボードを繋げば自動認識。自分の音はすぐ鳴り、相手には次の小節で届きます
-        （自分=左、相手=右にパン）。接続前でも音色は試聴できます。
-      </p>
-      <div class="modes" id="modes">
-        <span class="modes-label">音色:</span>
-        <button class="mode active" data-mode="keys">🎹 Keys</button>
-        <button class="mode" data-mode="bass">🎸 Bass</button>
-        <button class="mode" data-mode="drums">🥁 Drums</button>
-      </div>
-      <div class="looper" id="looper">
-        <button id="btnSolo">🎧 ソロ開始</button>
-        <span class="sep">|</span>
-        <label>ループ長
-          <select id="loopBars">
-            <option value="1">1</option>
-            <option value="2">2</option>
-            <option value="4">4</option>
-          </select> 小節
-        </label>
-        <button id="btnRec">● 録音</button>
-        <button id="btnClear">■ クリア</button>
-        <span id="loopState">ループ: 空</span>
-      </div>
-      <div class="meter">
-        <span id="meter">bar - beat -</span>
-        <span id="midiInfo">MIDI: —</span>
-      </div>
-      <div class="keyboard" id="keyboard"></div>
-    </section>
+  <!-- 起動オーバーレイ（ブラウザの自動再生制限のためクリックが必要） -->
+  <div id="startOverlay">
+    <div class="splash">
+      <div class="logo big">LOOP<span>SESSION</span></div>
+      <p>P2P オンラインルーパー</p>
+      <button id="startBtn">START SESSION</button>
+      <p class="dim">クリックするとオーディオと入力デバイスを初期化します。<br>ヘッドホンの使用を推奨。</p>
+    </div>
+  </div>
 
-    <!-- ============ ③ オーディオ ============ -->
-    <section class="card">
-      <h2>③ オーディオ（音声転送・β）</h2>
-      <p class="hint">
-        オーディオI/Fの入力を<b>1小節遅れ</b>で相手へ送ります。
-        <b>ヘッドホン推奨</b>（スピーカーだとハウリング）。自分の音は<b>機材側でモニター</b>してください。
-        接続（または🎧ソロ）してから使います。
-      </p>
-      <div class="audio-row">
-        <label>入力デバイス
-          <select id="audioDevice"></select>
-        </label>
-        <button id="btnAudioRefresh" title="デバイス一覧を更新">⟳</button>
-        <button id="btnAudio">🎤 音声オン</button>
-        <div class="level"><div id="levelBar"></div></div>
-      </div>
-      <div id="audioStatus" class="hint"></div>
-    </section>
-
-    <!-- ============ ログ ============ -->
-    <section class="card">
-      <h2>ログ</h2>
-      <pre id="log"></pre>
-    </section>
-  </main>
-
-  <script type="module" src="./src/main.js?v=4"></script>
+  <script type="module" src="./src/main.js"></script>
 </body>
 </html>

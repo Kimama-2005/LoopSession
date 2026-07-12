@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LoopSession — 1小節ディレイ合奏プロトタイプ</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header>
+    <h1>LoopSession <small>prototype</small></h1>
+    <p class="tagline">サーバーレスP2P × 1小節ディレイで遅延を気にせず合奏する</p>
+  </header>
+
+  <main>
+    <!-- ============ ① 接続 ============ -->
+    <section class="card">
+      <h2>① 接続（手動シグナリング）</h2>
+      <p class="hint">
+        片方が「ホスト」、もう片方が「参加者」。オファー／アンサーの文字列を
+        チャット等でコピペ交換すればサーバー不要でP2P接続します。
+      </p>
+
+      <div class="cols">
+        <!-- Host -->
+        <div class="pane">
+          <h3>ホスト（曲を仕切る側）</h3>
+          <div class="row">
+            <label>BPM <input id="bpm" type="number" value="120" min="40" max="240" /></label>
+            <label>拍子/小節 <input id="beats" type="number" value="4" min="1" max="12" /></label>
+            <label>遅延(小節) <input id="delay" type="number" value="1" min="1" max="4" /></label>
+          </div>
+          <button id="btnHost">1. オファーを作成</button>
+          <label class="fld">オファー（相手に送る）
+            <textarea id="offerOut" readonly placeholder="ここに生成される文字列を相手へ"></textarea>
+          </label>
+          <label class="fld">アンサー（相手から貼る）
+            <textarea id="answerIn" placeholder="相手のアンサーをここに貼る"></textarea>
+          </label>
+          <button id="btnAccept">3. アンサーを取り込む → 接続</button>
+        </div>
+
+        <!-- Client -->
+        <div class="pane">
+          <h3>参加者（招かれる側）</h3>
+          <label class="fld">オファー（相手から貼る）
+            <textarea id="offerIn" placeholder="ホストのオファーをここに貼る"></textarea>
+          </label>
+          <button id="btnClient">2. アンサーを作成</button>
+          <label class="fld">アンサー（相手に送る）
+            <textarea id="answerOut" readonly placeholder="ここに生成される文字列をホストへ"></textarea>
+          </label>
+        </div>
+      </div>
+
+      <div class="status">
+        <span>状態: <b id="status">未接続</b></span>
+        <span id="syncInfo"></span>
+      </div>
+    </section>
+
+    <!-- ============ ② 演奏 ============ -->
+    <section class="card">
+      <h2>② 演奏</h2>
+      <p class="hint">
+        PCキーボードが鍵盤になります： <code>A W S E D F T G Y H U J K</code>。
+        MIDIキーボードを繋げば自動認識。自分の音はすぐ鳴り、相手には次の小節で届きます
+        （自分=左、相手=右にパン）。接続前でも音色は試聴できます。
+      </p>
+      <div class="modes" id="modes">
+        <span class="modes-label">音色:</span>
+        <button class="mode active" data-mode="keys">🎹 Keys</button>
+        <button class="mode" data-mode="bass">🎸 Bass</button>
+        <button class="mode" data-mode="drums">🥁 Drums</button>
+      </div>
+      <div class="looper" id="looper">
+        <button id="btnSolo">🎧 ソロ開始</button>
+        <span class="sep">|</span>
+        <label>ループ長
+          <select id="loopBars">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="4">4</option>
+          </select> 小節
+        </label>
+        <button id="btnRec">● 録音</button>
+        <button id="btnClear">■ クリア</button>
+        <span id="loopState">ループ: 空</span>
+      </div>
+      <div class="meter">
+        <span id="meter">bar - beat -</span>
+        <span id="midiInfo">MIDI: —</span>
+      </div>
+      <div class="keyboard" id="keyboard"></div>
+    </section>
+
+    <!-- ============ ③ オーディオ ============ -->
+    <section class="card">
+      <h2>③ オーディオ（音声転送・β）</h2>
+      <p class="hint">
+        オーディオI/Fの入力を<b>1小節遅れ</b>で相手へ送ります。
+        <b>ヘッドホン推奨</b>（スピーカーだとハウリング）。自分の音は<b>機材側でモニター</b>してください。
+        接続（または🎧ソロ）してから使います。
+      </p>
+      <div class="audio-row">
+        <label>入力デバイス
+          <select id="audioDevice"></select>
+        </label>
+        <button id="btnAudioRefresh" title="デバイス一覧を更新">⟳</button>
+        <button id="btnAudio">🎤 音声オン</button>
+        <div class="level"><div id="levelBar"></div></div>
+      </div>
+      <div id="audioStatus" class="hint"></div>
+    </section>
+
+    <!-- ============ ログ ============ -->
+    <section class="card">
+      <h2>ログ</h2>
+      <pre id="log"></pre>
+    </section>
+  </main>
+
+  <script type="module" src="./src/main.js?v=4"></script>
+</body>
+</html>
