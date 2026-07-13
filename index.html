@@ -64,9 +64,39 @@
       <div id="synthWarn" class="warn" hidden></div>
     </section>
 
-    <!-- トラック -->
+    <!-- モード切替 -->
+    <nav id="modeTabs">
+      <button data-mode="looper" class="on">LOOPER</button>
+      <button data-mode="live">LIVE</button>
+    </nav>
+
+    <!-- トラック（LOOPER モード） -->
     <main id="tracks"></main>
     <button id="addTrackBtn" class="addTrack">＋ トラック追加</button>
+
+    <!-- LIVE モード（遅延合奏・レガシー版の後継） -->
+    <section id="liveSec" class="panel" hidden>
+      <div class="inputRow">
+        <button id="liveBtn" class="bigToggle">LIVE送信 OFF</button>
+        <div class="field">
+          <select id="liveDelaySel">
+            <option value="1" selected>1小節</option>
+            <option value="2">2小節</option>
+          </select>
+          <label>遅延</label>
+        </div>
+      </div>
+      <p class="dim">
+        自分の演奏（ライン入力＋音源）をそのまま相手へ送り続け、相手側では
+        指定した小節数だけ遅れてグリッドに整列して鳴る（NINJAM方式）。
+        ルーパーを使わない掛け合いセッション用。自分の音は各自モニターで聞く。
+      </p>
+      <div class="inputRow">
+        <span class="secLabel">相手の音量</span>
+        <input id="liveRecvVol" type="range" min="0" max="1.2" step="0.01" value="0.9">
+      </div>
+      <div id="liveStatus" class="dim">相手からのLIVE送信: OFF</div>
+    </section>
 
     <!-- 接続 -->
     <details id="connPanel" class="panel">
@@ -77,7 +107,7 @@
           <input id="nameInput" type="text" maxlength="16">
         </div>
         <div class="connBtns">
-          <button id="makeOfferBtn">① オファーを作る</button>
+          <button id="makeOfferBtn">① 参加コードを作る（ホスト・1人ずつ）</button>
         </div>
         <div class="sigBlock">
           <label>自分のコード（相手に送る）</label>
@@ -89,7 +119,8 @@
           <textarea id="remoteSig" rows="3" placeholder="相手から届いたコードをここに貼る"></textarea>
           <button id="acceptSigBtn">② 受け取る</button>
         </div>
-        <div id="connStatus" class="connStatus">未接続。片方が①→コードを相手へ→相手が貼って②→返ってきたコードを貼って②。</div>
+        <div id="connStatus" class="connStatus">未接続。ホスト: ①で作ったコードを参加者へ→返ってきた応答コードを貼って②（人数分繰り返す）。参加者: 届いたコードを貼って②→出たコードをホストへ返す。3人以上は全員がホストと接続する。</div>
+        <div id="peerList" class="dim"></div>
       </div>
     </details>
 
@@ -107,6 +138,12 @@
           <span class="secLabel">マスター</span>
           <input id="masterVol" type="range" min="0" max="1" step="0.01" value="0.9">
         </div>
+        <div class="inputRow">
+          <span class="secLabel">出力先</span>
+          <select id="outputSel" title="Masterの出力デバイス"></select>
+        </div>
+        <p class="dim">最終出力をDAWに戻す場合は、仮想デバイス（VoiceMeeter Input 等）や
+        オーディオI/Fの別出力を選び、DAW側でそれを入力として録る。</p>
       </div>
     </details>
 

@@ -9,6 +9,7 @@ import { SharedClock, AudioEngine } from './engine.js';
 import { Track } from './track.js';
 import { P2P, encodePcm16, decodePcm16 } from './p2p.js';
 import { InstrumentHost, PLUGIN_PRESETS, initMidi, PcKeyboard } from './instrument.js';
+import { LiveSend, LiveReceive } from './live.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -21,9 +22,19 @@ const p2p = new P2P(clock);
 
 const myPeerId = Math.random().toString(16).slice(2, 6);
 let myName = localStorage.getItem('ls-name') || `Player-${myPeerId}`;
-let peerName = null;
+const peerNames = new Map(); // peerId → 名前（自分以外の全参加者）
 let trackSeq = 0;
 let colorSeq = 0;
+
+// ホストが他のゲストへ中継する制御メッセージ
+const RELAY_TYPES = new Set([
+  'transport', 'bpm', 'track-add', 'track-len', 'track-clear',
+  'track-remove', 'layer-remove', 'live-state', 'peer-name',
+]);
+
+function ownerLabel(ownerId) {
+  return peerNames.get(ownerId) || 'PEER';
+}
 
 // trackId -> { track, el, canvas, playhead, recShade, emptyLabel, ... }
 const tracks = new Map();
@@ -43,10 +54,71 @@ $('startBtn').addEventListener('click', async () => {
   initConnUI();
   initSettingsUI();
   initSynthUI();
+  initModeTabs();
+  initLiveUI();
   await initInput();
   addLocalTrack();
   requestAnimationFrame(rafLoop);
 });
+
+// ───────────────────────── モード切替 ─────────────────────────
+
+function initModeTabs() {
+  for (const b of $('modeTabs').querySelectorAll('button')) {
+    b.addEventListener('click', () => setMode(b.dataset.mode));
+  }
+}
+
+function setMode(mode) {
+  for (const b of $('modeTabs').querySelectorAll('button')) {
+    b.classList.toggle('on', b.dataset.mode === mode);
+  }
+  const looper = mode === 'looper';
+  $('tracks').hidden = !looper;
+  $('addTrackBtn').hidden = !looper;
+  $('liveSec').hidden = looper;
+}
+
+// ───────────────────────── LIVE モード ─────────────────────────
+
+let liveSend = null;
+let liveRecv = null;
+
+function initLiveUI() {
+  liveSend = new LiveSend(engine, p2p, myPeerId);
+  liveRecv = new LiveReceive(engine);
+
+  $('liveBtn').addEventListener('click', () => {
+    if (!liveSend.enabled) {
+      if (!p2p.isOpen()) {
+        $('liveStatus').textContent = 'P2P接続してからLIVE送信を開始してください。';
+        return;
+      }
+      if (!engine.hasInput() && !(instrument && instrument.active)) {
+        $('liveStatus').textContent = 'LIVE送信にはライン入力かプラグイン音源が必要です。';
+        return;
+      }
+      if (!engine.running) startTransport(true);
+    }
+    liveSend.setEnabled(!liveSend.enabled);
+    updateLiveUI();
+  });
+  $('liveDelaySel').addEventListener('change', () => liveSend.setDelay(+$('liveDelaySel').value));
+  $('liveRecvVol').addEventListener('input', () => liveRecv.setGain(+$('liveRecvVol').value));
+  liveRecv.addEventListener('change', updateLiveUI);
+  updateLiveUI();
+}
+
+function updateLiveUI() {
+  const btn = $('liveBtn');
+  btn.textContent = liveSend.enabled ? 'LIVE送信 ON' : 'LIVE送信 OFF';
+  btn.classList.toggle('on', liveSend.enabled);
+  $('modeTabs').querySelector('[data-mode="live"]').classList.toggle('live-on', liveSend.enabled);
+  const senders = [...liveRecv.states.entries()].filter(([, s]) => s.on);
+  $('liveStatus').textContent = senders.length
+    ? `受信中のLIVE: ${senders.map(([id, s]) => `${ownerLabel(id)}（${s.delayBars}小節遅れ）`).join(', ')}`
+    : '相手からのLIVE送信: OFF';
+}
 
 // ───────────────────────── 入力 ─────────────────────────
 
@@ -59,6 +131,16 @@ async function initInput() {
   }
   await refreshDevices();
   navigator.mediaDevices.addEventListener('devicechange', refreshDevices);
+
+  // 前回の出力先を復元
+  const savedOut = localStorage.getItem('ls-output');
+  if (savedOut && engine.canSetOutput()) {
+    const outSel = $('outputSel');
+    if ([...outSel.options].some((o) => o.value === savedOut)) {
+      outSel.value = savedOut;
+      engine.setOutput(savedOut).catch(() => {});
+    }
+  }
 
   $('deviceSel').addEventListener('change', async () => {
     try {
@@ -87,6 +169,24 @@ async function refreshDevices() {
     sel.appendChild(opt);
   });
   if (engine.inputDeviceId) sel.value = engine.inputDeviceId;
+
+  // Master の出力先（設定パネル）
+  const outSel = $('outputSel');
+  outSel.innerHTML = '';
+  if (!engine.canSetOutput()) {
+    outSel.appendChild(new Option('このブラウザは未対応 (Chrome/Edge 110+)', ''));
+    outSel.disabled = true;
+  } else {
+    outSel.appendChild(new Option('既定の出力', 'default'));
+    const outs = await engine.listOutputs();
+    outs.forEach((d, i) => {
+      if (d.deviceId && d.deviceId !== 'default') {
+        outSel.appendChild(new Option(d.label || `出力デバイス ${i + 1}`, d.deviceId));
+      }
+    });
+    outSel.value = engine.outputDeviceId || 'default';
+    if (outSel.selectedIndex < 0) outSel.value = 'default';
+  }
 }
 
 function warnInput(text) {
@@ -239,7 +339,7 @@ function buildTrackRow(track) {
     </div>`;
 
   el.querySelector('.tname').textContent = track.name;
-  el.querySelector('.towner').textContent = track.remote ? (peerName || 'PEER') : 'YOU';
+  el.querySelector('.towner').textContent = track.remote ? ownerLabel(track.ownerId) : 'YOU';
   el.querySelector('.tlen').value = track.lengthBars;
 
   const entry = {
@@ -439,7 +539,8 @@ function initConnUI() {
   $('nameInput').addEventListener('change', () => {
     myName = $('nameInput').value.trim() || myName;
     localStorage.setItem('ls-name', myName);
-    p2p.send({ t: 'hello', peerId: myPeerId, name: myName, quiet: true });
+    p2p.send({ t: 'peer-name', peerId: myPeerId, name: myName });
+    updatePeerList();
   });
 
   $('makeOfferBtn').addEventListener('click', async () => {
@@ -476,9 +577,15 @@ function initConnUI() {
   });
 
   p2p.addEventListener('status', updateBadge);
-  p2p.addEventListener('open', onPeerOpen);
-  p2p.addEventListener('msg', (e) => handleMsg(e.detail));
+  p2p.addEventListener('open', (e) => onPeerOpen(e.detail.link));
+  p2p.addEventListener('peer-close', (e) => onPeerClose(e.detail.link));
+  p2p.addEventListener('msg', (e) => handleMsg(e.detail.m, e.detail.link));
   p2p.addEventListener('loop', (e) => handleLoop(e.detail));
+  p2p.addEventListener('live', (e) => {
+    liveRecv.onData(e.detail.data);
+    // ホストは他のゲストへ中継（ヘッダに送信者IDが入っているのでそのまま流せる）
+    if (p2p.role === 'host') p2p.sendLive(e.detail.data, e.detail.link);
+  });
 }
 
 function setConnStatus(text, cls = '') {
@@ -489,35 +596,83 @@ function setConnStatus(text, cls = '') {
 
 function updateBadge() {
   const badge = $('connBadge');
-  if (p2p.connected) {
-    badge.textContent = peerName ? `⇄ ${peerName}` : 'LINKED';
+  const n = p2p.openLinks().length;
+  if (n > 0) {
+    const total = p2p.role === 'host' ? n : peerNames.size;
+    badge.textContent = `⇄ ${Math.max(total, n)}人`;
+    badge.title = [...peerNames.values()].join(', ');
     badge.className = 'badge on';
   } else {
     badge.textContent = 'OFFLINE';
     badge.className = 'badge off';
-    if (peerName) setConnStatus('切断されました。', 'err');
+    if (peerNames.size) setConnStatus('切断されました。', 'err');
+  }
+  updatePeerList();
+}
+
+function updatePeerList() {
+  const names = [...peerNames.values()];
+  $('peerList').textContent = names.length
+    ? `参加者: ${myName}（自分）, ${names.join(', ')}`
+    : '';
+}
+
+function refreshOwnerLabels() {
+  for (const { el, track } of tracks.values()) {
+    if (track.remote) el.querySelector('.towner').textContent = ownerLabel(track.ownerId);
   }
 }
 
-// DataChannel が開いた（answer 側はクロック同期後に飛んでくる）
-function onPeerOpen() {
-  p2p.send({ t: 'hello', peerId: myPeerId, name: myName });
+// リンクの DataChannel が開いた（ゲスト側はクロック同期後に飛んでくる）
+function onPeerOpen(link) {
+  p2p.sendTo(link, { t: 'hello', peerId: myPeerId, name: myName });
+  if (liveSend && liveSend.enabled) liveSend.sendState();
   updateBadge();
-  setConnStatus('接続しました！', 'ok');
+  setConnStatus(p2p.role === 'host'
+    ? '接続しました！ さらに人数を増やすには再度「参加コードを作る」。'
+    : '接続しました！', 'ok');
 }
 
-function handleMsg(m) {
+function onPeerClose(link) {
+  if (link.peerId) {
+    peerNames.delete(link.peerId);
+    if (p2p.role === 'host') p2p.send({ t: 'peer-left', peerId: link.peerId });
+  }
+  updateBadge();
+}
+
+function handleMsg(m, link) {
+  // ホストは制御メッセージを他のゲストへ中継する（スター型の要）
+  if (p2p.role === 'host' && RELAY_TYPES.has(m.t)) {
+    p2p.send(m, link);
+  }
   switch (m.t) {
     case 'hello': {
-      peerName = m.name;
+      link.peerId = m.peerId;
+      link.peerName = m.name;
+      peerNames.set(m.peerId, m.name);
       updateBadge();
-      for (const { el, track } of tracks.values()) {
-        if (track.remote) el.querySelector('.towner').textContent = peerName;
-      }
+      refreshOwnerLabels();
       if (m.quiet) return; // 名前変更の再通知
-      sendSnapshot();
+      if (p2p.role === 'host') {
+        // 新しい参加者を既存メンバーに紹介し、既存メンバーの名前を新参加者へ
+        p2p.send({ t: 'peer-name', peerId: m.peerId, name: m.name }, link);
+        for (const [id, name] of peerNames) {
+          if (id !== m.peerId) p2p.sendTo(link, { t: 'peer-name', peerId: id, name });
+        }
+      }
+      sendSnapshotTo(link, m.peerId);
       return;
     }
+    case 'peer-name':
+      peerNames.set(m.peerId, m.name);
+      updateBadge();
+      refreshOwnerLabels();
+      return;
+    case 'peer-left':
+      peerNames.delete(m.peerId);
+      updateBadge();
+      return;
     case 'sync': {
       // 接続時にオファー側から届くテンポ/トランスポートの現状
       if (m.bpm !== engine.bpm || m.beatsPerBar !== engine.beatsPerBar) {
@@ -553,13 +708,17 @@ function handleMsg(m) {
     case 'layer-remove':
       tracks.get(m.trackId)?.track.removeLayer(m.layerId);
       return;
+    case 'live-state':
+      liveRecv.setState(m);
+      return;
   }
 }
 
-// 接続直後: オファー側がテンポ/トランスポートを送り、双方が自分のトラックを再送する
-function sendSnapshot() {
-  if (p2p.role === 'offer') {
-    p2p.send({
+// 接続直後にそのリンクへ現状を送る。ホストはテンポ/走行状態と
+// 自分が知る全トラック（他ゲストのぶんも代理送信）、ゲストは自分のトラックのみ。
+function sendSnapshotTo(link, joinerId) {
+  if (p2p.role === 'host') {
+    p2p.sendTo(link, {
       t: 'sync',
       bpm: engine.bpm,
       beatsPerBar: engine.beatsPerBar,
@@ -568,19 +727,21 @@ function sendSnapshot() {
     });
   }
   for (const { track } of tracks.values()) {
-    if (track.remote) continue;
-    p2p.send({ t: 'track-add', trackId: track.id, name: track.name, lengthBars: track.lengthBars });
-    for (const layer of track.layers) sendLayer(track, layer);
+    if (track.ownerId === joinerId) continue; // 本人のトラックは送り返さない
+    if (p2p.role !== 'host' && track.remote) continue;
+    p2p.sendTo(link, {
+      t: 'track-add', trackId: track.id, name: track.name, lengthBars: track.lengthBars,
+    });
+    for (const layer of track.layers) sendLayerTo(link, track, layer);
   }
 }
 
-function sendLayer(track, layer) {
-  if (!p2p.isOpen()) return;
+function layerPayload(track, layer) {
   const buf = layer.buffer;
   const chans = [];
   for (let c = 0; c < buf.numberOfChannels; c++) chans.push(buf.getChannelData(c));
-  p2p.sendLoop(
-    {
+  return {
+    meta: {
       trackId: track.id,
       layerId: layer.id,
       trackName: track.name,
@@ -590,11 +751,24 @@ function sendLayer(track, layer) {
       channels: buf.numberOfChannels,
       frames: buf.length,
     },
-    encodePcm16(chans)
-  );
+    pcm: encodePcm16(chans),
+  };
 }
 
-function handleLoop({ meta, buffer }) {
+function sendLayer(track, layer) {
+  if (!p2p.isOpen()) return;
+  const { meta, pcm } = layerPayload(track, layer);
+  p2p.sendLoop(meta, pcm);
+}
+
+function sendLayerTo(link, track, layer) {
+  const { meta, pcm } = layerPayload(track, layer);
+  p2p.sendLoopTo(link, meta, pcm);
+}
+
+function handleLoop({ meta, buffer, link }) {
+  // ホストは他のゲストへ中継（layerId の重複チェックがエコーを防ぐ）
+  if (p2p.role === 'host') p2p.sendLoop(meta, buffer, link);
   let entry = tracks.get(meta.trackId);
   if (!entry) {
     entry = createRemoteTrack({
@@ -754,6 +928,16 @@ function initSettingsUI() {
   $('masterVol').addEventListener('input', () => {
     engine.master.gain.value = +$('masterVol').value;
   });
+  $('outputSel').addEventListener('change', async () => {
+    const id = $('outputSel').value;
+    try {
+      await engine.setOutput(id);
+      localStorage.setItem('ls-output', id);
+    } catch (err) {
+      alert('出力先を変更できませんでした: ' + (err && err.message || err));
+      $('outputSel').value = engine.outputDeviceId || 'default';
+    }
+  });
   updateLatencyLabel();
 }
 
@@ -762,4 +946,9 @@ function updateLatencyLabel() {
 }
 
 // コンソールからの動作検証用
-window.__ls = { engine, p2p, clock, tracks, get instrument() { return instrument; } };
+window.__ls = {
+  engine, p2p, clock, tracks,
+  get instrument() { return instrument; },
+  get liveSend() { return liveSend; },
+  get liveRecv() { return liveRecv; },
+};

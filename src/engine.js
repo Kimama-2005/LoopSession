@@ -66,6 +66,26 @@ export class AudioEngine extends EventTarget {
     return devs.filter((d) => d.kind === 'audioinput');
   }
 
+  // ── 出力（Master の送り先）────────────────────────────
+  // DAW に戻す場合は仮想デバイスや I/F の別出力を選ぶ。
+
+  async listOutputs() {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    return devs.filter((d) => d.kind === 'audiooutput');
+  }
+
+  canSetOutput() {
+    return typeof this.ctx.setSinkId === 'function';
+  }
+
+  async setOutput(deviceId) {
+    if (!this.canSetOutput()) {
+      throw new Error('このブラウザは出力先の変更に未対応です (Chrome/Edge 110+)');
+    }
+    await this.ctx.setSinkId(deviceId === 'default' ? '' : deviceId);
+    this.outputDeviceId = deviceId;
+  }
+
   // 入力デバイスを開く。AEC/NS/AGC はライン入力・音源入力を壊すため常時オフ。
   async selectInput(deviceId) {
     this._closeInput();
