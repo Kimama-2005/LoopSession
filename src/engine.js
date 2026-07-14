@@ -2,6 +2,40 @@
 // - SharedClock: P2P で同期する共有時刻（オファー側の performance.now() が基準）
 // - AudioEngine: AudioContext / 入力キャプチャ / トランスポート / メトロノーム
 
+// キャプチャチャンク列 → 16bit PCM ステレオ WAV
+export function encodeWav({ chunks, frames, sampleRate }) {
+  const channels = 2;
+  const dataSize = frames * channels * 2;
+  const buf = new ArrayBuffer(44 + dataSize);
+  const v = new DataView(buf);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, 'RIFF');
+  v.setUint32(4, 36 + dataSize, true);
+  str(8, 'WAVE');
+  str(12, 'fmt ');
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); // PCM
+  v.setUint16(22, channels, true);
+  v.setUint32(24, sampleRate, true);
+  v.setUint32(28, sampleRate * channels * 2, true);
+  v.setUint16(32, channels * 2, true);
+  v.setUint16(34, 16, true);
+  str(36, 'data');
+  v.setUint32(40, dataSize, true);
+  let o = 44;
+  for (const m of chunks) {
+    const ch1 = m.ch1 || m.ch0; // モノラル区間は両chに複製
+    for (let i = 0; i < m.frames; i++) {
+      let s = Math.max(-1, Math.min(1, m.ch0[i]));
+      v.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      s = Math.max(-1, Math.min(1, ch1[i]));
+      v.setInt16(o + 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      o += 4;
+    }
+  }
+  return buf;
+}
+
 export class SharedClock {
   constructor() {
     this.offsetMs = 0; // sharedNow = performance.now() + offsetMs
@@ -147,6 +181,40 @@ export class AudioEngine extends EventTarget {
     }
     this.inputPeak = Math.max(peak, this.inputPeak * 0.9);
     for (const cb of this._chunkListeners) cb(m);
+  }
+
+  // ── バウンス（Master出力のWAV録音）───────────────────────
+  // master の直後をキャプチャワークレットでタップして貯める。
+  // ルーティング不要でアプリの最終出力をそのまま書き出せる。
+
+  startBounce() {
+    if (this._bounce) return;
+    const node = new AudioWorkletNode(this.ctx, 'capture', { numberOfOutputs: 0 });
+    const b = { node, chunks: [], frames: 0, startCtx: this.ctx.currentTime };
+    node.port.onmessage = (e) => {
+      b.chunks.push(e.data);
+      b.frames += e.data.frames;
+    };
+    this.master.connect(node);
+    this._bounce = b;
+  }
+
+  bounceActive() {
+    return !!this._bounce;
+  }
+
+  bounceSeconds() {
+    return this._bounce ? this.ctx.currentTime - this._bounce.startCtx : 0;
+  }
+
+  stopBounce() {
+    const b = this._bounce;
+    if (!b) return null;
+    this._bounce = null;
+    b.node.port.onmessage = null;
+    this.master.disconnect(b.node);
+    b.node.disconnect?.();
+    return { chunks: b.chunks, frames: b.frames, sampleRate: this.ctx.sampleRate };
   }
 
   // ── レイテンシ補正 ─────────────────────────────────────

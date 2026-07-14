@@ -107,6 +107,14 @@ header {
 .tbtn.toggle { font-size: 10px; letter-spacing: 1px; color: var(--dim); }
 .tbtn.toggle.on { color: var(--accent); border-color: var(--accent); }
 
+#bounceBtn { width: auto; min-width: 44px; padding: 0 8px; }
+#bounceBtn.rec {
+  background: var(--rec);
+  color: #fff;
+  border-color: var(--rec);
+  animation: blink 1s step-end infinite;
+}
+
 .field {
   display: flex;
   flex-direction: column;

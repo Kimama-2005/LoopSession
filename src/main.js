@@ -5,7 +5,7 @@
 // DataChannel で転送し、受信側が共有クロックのグリッドへ位相整列して再生する。
 // これによりネットワーク遅延はループ到着の遅れ（次の周回で吸収）にしかならない。
 
-import { SharedClock, AudioEngine } from './engine.js';
+import { SharedClock, AudioEngine, encodeWav } from './engine.js';
 import { Track } from './track.js';
 import { P2P, encodePcm16, decodePcm16 } from './p2p.js';
 import { InstrumentHost, PLUGIN_PRESETS, initMidi, PcKeyboard } from './instrument.js';
@@ -215,8 +215,41 @@ function initTransportUI() {
 
   engine.addEventListener('transport', onTransportChange);
 
+  $('bounceBtn').addEventListener('click', toggleBounce);
+
   $('bpmInput').value = engine.bpm;
   rebuildLeds();
+}
+
+// ── バウンス（Master → WAV ダウンロード）──
+
+const BOUNCE_MAX_SEC = 600; // 念のための上限（約10分 ≒ 100MB）
+
+function toggleBounce() {
+  if (engine.bounceActive()) {
+    finishBounce();
+  } else {
+    engine.startBounce();
+    $('bounceBtn').classList.add('rec');
+  }
+}
+
+function finishBounce() {
+  const data = engine.stopBounce();
+  const btn = $('bounceBtn');
+  btn.classList.remove('rec');
+  btn.textContent = 'WAV';
+  if (!data || data.frames === 0) return;
+  const wav = encodeWav(data);
+  const blob = new Blob([wav], { type: 'audio/wav' });
+  const ts = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const name = `loopsession-${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}-${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}.wav`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
 
 function startTransport(broadcast) {
@@ -498,6 +531,16 @@ function rafLoop() {
   requestAnimationFrame(rafLoop);
   // 入力メーター
   $('inputMeter').style.width = `${Math.min(1, engine.inputPeak) * 100}%`;
+
+  // バウンス経過表示と上限での自動停止
+  if (engine.bounceActive()) {
+    const sec = engine.bounceSeconds();
+    if (sec > BOUNCE_MAX_SEC) {
+      finishBounce();
+    } else {
+      $('bounceBtn').textContent = `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+    }
+  }
 
   // 小節.拍 表示と LED
   if (engine.running) {
