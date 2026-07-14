@@ -44,6 +44,12 @@
         <select id="deviceSel" title="入力デバイス（オーディオI/F・ループバック等）"></select>
         <button id="monitorBtn" class="tbtn toggle" title="入力をこのブラウザ経由でモニター（遅延あり。通常はI/F直モニター推奨）">MON</button>
       </div>
+      <div class="inputRow" style="margin-top:8px">
+        <span class="secLabel">GAIN</span>
+        <input id="inputGainSlider" type="range" min="0" max="2" step="0.01" value="1"
+               title="入力ゲイン。録音・LIVE送信・モニターすべてに効く（環境ごとの音量差の調整用）">
+        <span id="inputGainVal" class="dim" style="min-width:38px;text-align:right">100%</span>
+      </div>
       <div class="meterWrap"><div id="inputMeter"></div></div>
       <div id="inputWarn" class="warn" hidden></div>
     </section>
@@ -142,6 +148,12 @@
         <div class="inputRow">
           <span class="secLabel">出力先</span>
           <select id="outputSel" title="Masterの出力デバイス"></select>
+        </div>
+        <div class="inputRow">
+          <span class="secLabel">ミックス</span>
+          <button id="mixFollowBtn" class="tbtn toggle on" style="width:auto;padding:0 10px"
+                  title="オン: ホストの音量/ミュート操作が自分にも反映される。オフ: 各自で自由に調整">ホストに従う</button>
+          <span class="dim">オフにすると音量/ミュートを各自で調整</span>
         </div>
         <p class="dim">最終出力をDAWに戻す場合は、仮想デバイス（VoiceMeeter Input 等）や
         オーディオI/Fの別出力を選び、DAW側でそれを入力として録る。</p>

@@ -165,6 +165,8 @@ header {
   border-radius: 4px;
   font-size: 12px;
 }
+#inputGainSlider { flex: 1; min-width: 40px; accent-color: var(--accent); }
+
 .meterWrap {
   margin-top: 8px;
   height: 6px;
@@ -293,6 +295,22 @@ header {
 
 .trackHead { display: flex; align-items: center; gap: 8px; }
 .tname { font-weight: 600; font-size: 12px; letter-spacing: 1px; }
+input.tnameEdit {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text);
+  font-family: inherit;
+  width: 110px;
+  min-width: 0;
+  padding: 2px 4px;
+}
+input.tnameEdit:hover { border-color: var(--border); }
+input.tnameEdit:focus {
+  border-color: var(--accent);
+  background: var(--panel2);
+  outline: none;
+}
 .towner {
   font-size: 9px;
   letter-spacing: 1px;

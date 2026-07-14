@@ -29,11 +29,26 @@ let colorSeq = 0;
 // ホストが他のゲストへ中継する制御メッセージ
 const RELAY_TYPES = new Set([
   'transport', 'bpm', 'track-add', 'track-len', 'track-clear',
-  'track-remove', 'layer-remove', 'live-state', 'peer-name',
+  'track-remove', 'layer-remove', 'live-state', 'peer-name', 'track-rename',
 ]);
 
 function ownerLabel(ownerId) {
   return peerNames.get(ownerId) || 'PEER';
+}
+
+// ホストのミックス（音量/ミュート）に従うか（設定で切替・保存）
+let mixFollow = localStorage.getItem('ls-mix-follow') !== '0';
+
+// ホストの音量/ミュート操作を全員へ配信する
+function sendMix(track) {
+  if (p2p.role !== 'host' || !p2p.isOpen()) return;
+  p2p.send({ t: 'mix', trackId: track.id, gain: track.gain, muted: track.muted });
+}
+
+function setTrackNameEl(el, track) {
+  const nameEl = el.querySelector('.tname');
+  if (nameEl.tagName === 'INPUT') nameEl.value = track.name;
+  else nameEl.textContent = track.name;
 }
 
 // trackId -> { track, el, canvas, playhead, recShade, emptyLabel, ... }
@@ -123,6 +138,23 @@ function updateLiveUI() {
 // ───────────────────────── 入力 ─────────────────────────
 
 async function initInput() {
+  // 入力ゲイン（環境ごとの音量差の調整。localStorage に保存）
+  const savedGain = parseFloat(localStorage.getItem('ls-input-gain'));
+  if (!isNaN(savedGain)) {
+    engine.setInputGain(savedGain);
+    $('inputGainSlider').value = savedGain;
+  }
+  const showGain = () => {
+    $('inputGainVal').textContent = `${Math.round(engine.inputGain.gain.value * 100)}%`;
+  };
+  $('inputGainSlider').addEventListener('input', () => {
+    const v = +$('inputGainSlider').value;
+    engine.setInputGain(v);
+    localStorage.setItem('ls-input-gain', v);
+    showGain();
+  });
+  showGain();
+
   try {
     await engine.selectInput(null);
     warnInput('');
@@ -344,7 +376,9 @@ function buildTrackRow(track) {
     <div class="colorStrip"></div>
     <div class="body">
       <div class="trackHead">
-        <span class="tname"></span>
+        ${track.remote
+          ? '<span class="tname"></span>'
+          : '<input class="tname tnameEdit" maxlength="16" spellcheck="false" title="クリックして名前を変更">'}
         <span class="towner"></span>
         <select class="tlen" title="ループ長">
           <option value="1">1小節</option>
@@ -371,7 +405,7 @@ function buildTrackRow(track) {
       </div>
     </div>`;
 
-  el.querySelector('.tname').textContent = track.name;
+  setTrackNameEl(el, track);
   el.querySelector('.towner').textContent = track.remote ? ownerLabel(track.ownerId) : 'YOU';
   el.querySelector('.tlen').value = track.lengthBars;
 
@@ -389,6 +423,7 @@ function buildTrackRow(track) {
     undoBtn: el.querySelector('.tundo'),
     clearBtn: el.querySelector('.tclear'),
     muteBtn: el.querySelector('.tmute'),
+    volSlider: el.querySelector('.tvol'),
   };
   tracks.set(track.id, entry);
   $('tracks').appendChild(el);
@@ -404,9 +439,23 @@ function buildTrackRow(track) {
 
   entry.muteBtn.addEventListener('click', () => {
     track.setMuted(entry.muteBtn.classList.toggle('on'));
+    sendMix(track);
   });
 
-  el.querySelector('.tvol').addEventListener('input', (e) => track.setGain(+e.target.value));
+  entry.volSlider.addEventListener('input', (e) => {
+    track.setGain(+e.target.value);
+    sendMix(track);
+  });
+
+  if (!track.remote) {
+    const nameInput = el.querySelector('.tnameEdit');
+    nameInput.addEventListener('change', () => {
+      const v = nameInput.value.trim().slice(0, 16) || track.name;
+      track.name = v;
+      nameInput.value = v;
+      p2p.send({ t: 'track-rename', trackId: track.id, name: v });
+    });
+  }
 
   if (!track.remote) {
     entry.recBtn.addEventListener('click', () => {
@@ -754,6 +803,24 @@ function handleMsg(m, link) {
     case 'live-state':
       liveRecv.setState(m);
       return;
+    case 'track-rename': {
+      const entry = tracks.get(m.trackId);
+      if (!entry) return;
+      entry.track.name = String(m.name).slice(0, 16);
+      setTrackNameEl(entry.el, entry.track);
+      return;
+    }
+    case 'mix': {
+      // ホストのミックスを反映（設定でオフにしていれば無視）
+      if (p2p.role === 'host' || !mixFollow) return;
+      const entry = tracks.get(m.trackId);
+      if (!entry) return;
+      entry.track.setGain(m.gain);
+      entry.track.setMuted(!!m.muted);
+      entry.volSlider.value = m.gain;
+      entry.muteBtn.classList.toggle('on', !!m.muted);
+      return;
+    }
   }
 }
 
@@ -776,6 +843,9 @@ function sendSnapshotTo(link, joinerId) {
       t: 'track-add', trackId: track.id, name: track.name, lengthBars: track.lengthBars,
     });
     for (const layer of track.layers) sendLayerTo(link, track, layer);
+    if (p2p.role === 'host') {
+      p2p.sendTo(link, { t: 'mix', trackId: track.id, gain: track.gain, muted: track.muted });
+    }
   }
 }
 
@@ -968,8 +1038,20 @@ function initSettingsUI() {
     engine.userLatencyMs = +$('latencyInput').value || 0;
     localStorage.setItem('ls-latency', engine.userLatencyMs);
   });
+  // マスター音量は環境差が大きいので端末ごとに保存・復元する
+  const savedMaster = parseFloat(localStorage.getItem('ls-master'));
+  if (!isNaN(savedMaster)) {
+    engine.master.gain.value = savedMaster;
+    $('masterVol').value = savedMaster;
+  }
   $('masterVol').addEventListener('input', () => {
     engine.master.gain.value = +$('masterVol').value;
+    localStorage.setItem('ls-master', $('masterVol').value);
+  });
+  $('mixFollowBtn').classList.toggle('on', mixFollow);
+  $('mixFollowBtn').addEventListener('click', () => {
+    mixFollow = $('mixFollowBtn').classList.toggle('on');
+    localStorage.setItem('ls-mix-follow', mixFollow ? '1' : '0');
   });
   $('outputSel').addEventListener('change', async () => {
     const id = $('outputSel').value;

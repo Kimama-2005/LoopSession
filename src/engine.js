@@ -86,9 +86,14 @@ export class AudioEngine extends EventTarget {
     // 録音経路の合流点。ライン入力とプラグイン音源がここに入り、
     // キャプチャワークレットが監視する（master へは繋がない）。
     this.captureBus = ctx.createGain();
+    // ライン入力のゲイン（環境差の吸収用）。録音・LIVE送信・モニター全てに効く
+    this.inputGain = ctx.createGain();
+    this.inputGain.gain.value = 1;
     this._captureNode = new AudioWorkletNode(ctx, 'capture', { numberOfOutputs: 0 });
     this._captureNode.port.onmessage = (e) => this._onChunkMsg(e.data);
     this.captureBus.connect(this._captureNode);
+    this.inputGain.connect(this.captureBus);
+    this.inputGain.connect(this.monitorGain);
     setInterval(() => this._tick(), 25);
     if (ctx.state !== 'running') await ctx.resume();
   }
@@ -139,8 +144,7 @@ export class AudioEngine extends EventTarget {
     this.inputDeviceId = settings.deviceId ?? deviceId ?? null;
     this.inputLabel = track.label;
     this._srcNode = this.ctx.createMediaStreamSource(stream);
-    this._srcNode.connect(this.captureBus);
-    this._srcNode.connect(this.monitorGain);
+    this._srcNode.connect(this.inputGain);
     this.dispatchEvent(new CustomEvent('input'));
   }
 
@@ -162,6 +166,10 @@ export class AudioEngine extends EventTarget {
 
   setMonitor(on) {
     this.monitorGain.gain.value = on ? 1 : 0;
+  }
+
+  setInputGain(v) {
+    this.inputGain.gain.value = v;
   }
 
   onChunk(cb) {
