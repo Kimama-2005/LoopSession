@@ -3,24 +3,27 @@
 // MIDI (WebMIDI / PCキーボード) で演奏する。出力はエンジンの captureBus に合流するので
 // ライン入力と同じ経路でループ録音できる。
 
-const SDK_URL = 'https://mainline.i3s.unice.fr/wam2/packages/sdk/src/initializeWamHost.js';
+// SDK とプリセットプラグインはリポジトリに同梱（vendor/wam/）。
+// 以前は mainline.i3s.unice.fr（大学サーバー）から読んでいたが、
+// 落ちていることがあるため同一オリジン配信に切り替えた。
+// 出所: github.com/webaudiomodules/wam-examples@2179e50 + sdk@d425ee7
+const SDK_URL = new URL('../vendor/wam/sdk/src/initializeWamHost.js', import.meta.url).href;
 
-// 動作確認済み (2026-07) のプリセットプラグイン
 export const PLUGIN_PRESETS = [
   {
     id: 'obxd',
     name: 'OBXD — アナログ風ポリシンセ',
-    url: 'https://mainline.i3s.unice.fr/wam2/packages/obxd/index.js',
+    url: new URL('../vendor/wam/obxd/index.js', import.meta.url).href,
   },
   {
     id: 'tinysynth',
     name: 'TinySynth — GM音源',
-    url: 'https://mainline.i3s.unice.fr/wam2/packages/tinySynth/src/index.js',
+    url: new URL('../vendor/wam/tinySynth/src/index.js', import.meta.url).href,
   },
   {
     id: 'faustflute',
     name: 'Faust Flute — 笛 (物理モデル)',
-    url: 'https://mainline.i3s.unice.fr/wam2/packages/faustFlute/index.js',
+    url: new URL('../vendor/wam/faustFlute/index.js', import.meta.url).href,
   },
 ];
 

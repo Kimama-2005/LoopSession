@@ -1053,9 +1053,15 @@ function initSynthUI() {
   });
   $('synthGuiBtn').addEventListener('click', toggleSynthGui);
 
-  // 前回の音源を復元（プリセットにある場合のみ）
-  const saved = localStorage.getItem('ls-synth');
-  if (saved && PLUGIN_PRESETS.some((p) => p.url === saved)) {
+  // 前回の音源を復元（プリセットにある場合のみ）。
+  // 旧ホスティング(mainline)のURLで保存されていた場合は同梱版へ読み替える
+  let saved = localStorage.getItem('ls-synth');
+  if (saved && !PLUGIN_PRESETS.some((p) => p.url === saved)) {
+    const dirOf = (u) => (u.match(/\/(obxd|tinySynth|faustFlute)\//) || [])[1];
+    const migrated = PLUGIN_PRESETS.find((p) => dirOf(p.url) && dirOf(p.url) === dirOf(saved));
+    saved = migrated ? migrated.url : null;
+  }
+  if (saved) {
     sel.value = saved;
     onSynthSelect(saved);
   }

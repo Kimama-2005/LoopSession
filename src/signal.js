@@ -5,7 +5,8 @@
 // ペイロードはルームコードから導出した AES-GCM 鍵で暗号化するため、
 // コードを知らない相手には内容（IPアドレス等を含むSDP）を読めない。
 
-const MQTT_CDN = 'https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js';
+// mqtt.js はリポジトリに同梱（外部CDN依存を避ける。元: unpkg mqtt@5.10.1）
+const MQTT_CDN = new URL('../vendor/mqtt.min.js', import.meta.url).href;
 const BROKERS = [
   'wss://broker.emqx.io:8084/mqtt',
   'wss://broker.hivemq.com:8884/mqtt',
