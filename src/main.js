@@ -8,7 +8,7 @@
 import { SharedClock, AudioEngine, encodeWav } from './engine.js';
 import { Track } from './track.js';
 import { P2P, encodePcm16, decodePcm16 } from './p2p.js';
-import { InstrumentHost, PLUGIN_PRESETS, GM_VOICES, initMidi, PcKeyboard } from './instrument.js';
+import { InstrumentHost, PLUGIN_PRESETS, GM_VOICES, DRUM_PADS, initMidi, PcKeyboard } from './instrument.js';
 import { LiveSend, LiveReceive } from './live.js';
 import { Signal, genRoomCode } from './signal.js';
 
@@ -1062,12 +1062,48 @@ function initSynthUI() {
       synthWarn('音色データを読み込み中…（数秒）');
     }
     const ok = await instrument.setGmVoice(v);
+    updateSynthUI();
     if (!ok) {
       synthWarn('Soundfont にドラムキットはありません（TinySynth のドラムを使ってください）');
       return;
     }
     synthWarn('');
     localStorage.setItem('ls-gm-voice', v);
+  });
+
+  // ドラムパッド（ドラムキット選択時のみ表示）。クリックで試聴でき、
+  // PCキー/MIDIどの経路で鳴らしてもパッドが点灯する
+  const pads = $('drumPads');
+  pads.title = 'クリックで試聴。表記のPCキーは KEYS オン時に有効（MIDIノート36〜51）';
+  const padByNote = new Map();
+  for (const [note, label, key] of DRUM_PADS) {
+    const b = document.createElement('button');
+    b.className = 'pad';
+    const keyEl = document.createElement('span');
+    keyEl.className = 'padKey';
+    keyEl.textContent = key;
+    const nameEl = document.createElement('span');
+    nameEl.className = 'padName';
+    nameEl.textContent = label;
+    b.append(keyEl, nameEl);
+    b.addEventListener('pointerdown', (ev) => {
+      ev.preventDefault();
+      instrument.noteOn(note, 127);
+    });
+    const off = () => instrument.noteOff(note);
+    b.addEventListener('pointerup', off);
+    b.addEventListener('pointerleave', off);
+    b.addEventListener('pointercancel', off);
+    pads.appendChild(b);
+    padByNote.set(note, b);
+  }
+  instrument.addEventListener('note', (e) => {
+    if (pads.hidden || !e.detail.on) return;
+    const b = padByNote.get(e.detail.note);
+    if (!b) return;
+    b.classList.add('hit');
+    clearTimeout(b._hitTimer);
+    b._hitTimer = setTimeout(() => b.classList.remove('hit'), 150);
   });
   $('synthVol').addEventListener('input', () => instrument.setGain(+$('synthVol').value));
   $('pckbBtn').addEventListener('click', () => {
@@ -1161,6 +1197,7 @@ function updateSynthUI() {
     : 'プラグインのGUIを開閉';
   $('pckbBtn').disabled = !active;
   $('gmRow').hidden = !(active && (kind === 'gm' || kind === 'soundfont'));
+  $('drumPads').hidden = !(active && kind === 'gm' && instrument.drumMode);
   if (!active) {
     $('pckbBtn').classList.remove('on');
     pckb.setEnabled(false);

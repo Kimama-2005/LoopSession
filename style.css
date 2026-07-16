@@ -216,6 +216,44 @@ header {
   font-size: 12px;
 }
 
+/* ドラムパッド */
+.drumPads {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+.pad {
+  height: 52px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  user-select: none;
+  touch-action: none;
+  transition: transform .05s, background-color .08s;
+}
+.pad:hover { border-color: var(--dim); }
+.padKey {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  font-family: monospace;
+  letter-spacing: 1px;
+}
+.padName { font-size: 9px; color: var(--dim); letter-spacing: .5px; }
+.pad.hit {
+  background: var(--arm);
+  border-color: var(--arm);
+  transform: scale(.94);
+}
+.pad.hit .padKey, .pad.hit .padName { color: #08121a; }
+
 /* ───── モードタブ ───── */
 #modeTabs {
   display: flex;

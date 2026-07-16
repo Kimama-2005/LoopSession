@@ -89,6 +89,15 @@ export const GM_VOICES = [
   ]],
 ];
 
+// ドラムパッド定義（GMドラム配列 36〜51 の16パッド、4×4表示）。
+// PCキーはドラムモード時の固定マッピング（基準オクターブ2 = ノート36起点）と一致する。
+export const DRUM_PADS = [
+  [36, 'キック', 'A'], [38, 'スネア', 'S'], [40, 'スネア2', 'D'], [39, 'クラップ', 'E'],
+  [42, 'ハイハット閉', 'T'], [44, 'HHペダル', 'Y'], [46, 'ハイハット開', 'U'], [49, 'クラッシュ', 'O'],
+  [41, 'タム 低', 'F'], [45, 'タム 中低', 'H'], [47, 'タム 中', 'J'], [48, 'タム 高', 'K'],
+  [37, 'リムショット', 'W'], [43, 'タム 低2', 'G'], [50, 'タム 最高', 'L'], [51, 'ライド', 'P'],
+];
+
 export class InstrumentHost extends EventTarget {
   constructor(engine) {
     super();
@@ -176,6 +185,14 @@ export class InstrumentHost extends EventTarget {
       time: this.engine.ctx.currentTime,
       data: { bytes },
     });
+    // UI(パッド点灯など)向けにノートイベントを通知。経路(パッド/PCキー/MIDI)を問わず
+    // ここを必ず通るので、どこから鳴らしても視覚効果が揃う
+    const st = bytes[0] & 0xf0;
+    if (st === 0x90 && bytes[2] > 0) {
+      this.dispatchEvent(new CustomEvent('note', { detail: { note: bytes[1], on: true } }));
+    } else if (st === 0x80 || (st === 0x90 && bytes[2] === 0)) {
+      this.dispatchEvent(new CustomEvent('note', { detail: { note: bytes[1], on: false } }));
+    }
   }
 
   noteOn(note, vel = 100) {
@@ -296,7 +313,10 @@ export class PcKeyboard {
     e.preventDefault();
     if (down) {
       if (this._down.has(e.code)) return;
-      const note = Math.min(127, (this.octave + 1) * 12 + semitone);
+      // ドラムモード中はオクターブ操作に関係なく GMドラム域(A=36キック〜)に固定し、
+      // パッドのキー表記と常に一致させる
+      const base = this.inst.drumMode ? 36 : (this.octave + 1) * 12;
+      const note = Math.min(127, base + semitone);
       this._down.set(e.code, note);
       this.inst.noteOn(note, 100);
     } else {
