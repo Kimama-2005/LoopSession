@@ -195,13 +195,25 @@ header {
 }
 .synthRow2 #midiStatus { min-width: 70px; }
 #synthVol { flex: 1; min-width: 40px; accent-color: var(--accent); }
+/* プラグインGUIは全貌が見えることを優先し、アプリの横幅からはみ出すのを許可する */
 .synthGui {
-  overflow: auto;
-  max-height: 480px;
+  width: max-content;
+  max-width: none;
+  overflow: visible;
   background: var(--panel2);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 4px;
+}
+#gmSel {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  background: var(--panel2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
 }
 
 /* ───── モードタブ ───── */

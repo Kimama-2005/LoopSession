@@ -9,6 +9,9 @@
 - `obxd/ tinySynth/ faustFlute/` —
   https://github.com/webaudiomodules/wam-examples
   @ `2179e50cf7bbc1f038a6e423651d9915505621f8`（MIT、LICENSE-wam-examples.txt 参照）
+- `soundfont/` — https://www.webaudiomodules.com/community/plugins/burns-audio/soundfont/
+  （https://github.com/boourns/wam-community 配布、MIT。音色サンプルは実行時に
+  https://gleitz.github.io/midi-js-soundfonts/ から取得＝オンライン必須）
 - `sdk/` — https://github.com/webaudiomodules/sdk
   @ `d425ee7ec0479b2a2ee0940374242356997b8ba6`
 - `../mqtt.min.js` — https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js（MIT）

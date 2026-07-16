@@ -8,7 +8,7 @@
 import { SharedClock, AudioEngine, encodeWav } from './engine.js';
 import { Track } from './track.js';
 import { P2P, encodePcm16, decodePcm16 } from './p2p.js';
-import { InstrumentHost, PLUGIN_PRESETS, initMidi, PcKeyboard } from './instrument.js';
+import { InstrumentHost, PLUGIN_PRESETS, GM_VOICES, initMidi, PcKeyboard } from './instrument.js';
 import { LiveSend, LiveReceive } from './live.js';
 import { Signal, genRoomCode } from './signal.js';
 
@@ -1047,6 +1047,28 @@ function initSynthUI() {
 
   sel.addEventListener('change', () => onSynthSelect(sel.value));
   instrument.addEventListener('change', updateSynthUI);
+
+  // GM 音色セレクタ（TinySynth 用）
+  const gmSel = $('gmSel');
+  for (const [group, voices] of GM_VOICES) {
+    const og = document.createElement('optgroup');
+    og.label = group;
+    for (const [value, label] of voices) og.appendChild(new Option(label, value));
+    gmSel.appendChild(og);
+  }
+  gmSel.addEventListener('change', async () => {
+    const v = gmSel.value;
+    if (instrument.kind === 'soundfont' && v !== 'drums') {
+      synthWarn('音色データを読み込み中…（数秒）');
+    }
+    const ok = await instrument.setGmVoice(v);
+    if (!ok) {
+      synthWarn('Soundfont にドラムキットはありません（TinySynth のドラムを使ってください）');
+      return;
+    }
+    synthWarn('');
+    localStorage.setItem('ls-gm-voice', v);
+  });
   $('synthVol').addEventListener('input', () => instrument.setGain(+$('synthVol').value));
   $('pckbBtn').addEventListener('click', () => {
     pckb.setEnabled($('pckbBtn').classList.toggle('on'));
@@ -1090,9 +1112,21 @@ async function onSynthSelect(value) {
   synthWarn('プラグインを読み込み中…');
   try {
     await instrument.load(value);
+    if (instrument.currentUrl !== value) return; // 別のロードに追い越された
     localStorage.setItem('ls-synth', value);
     synthWarn('');
     ensureMidi();
+    // GM系音源なら前回の音色を復元
+    if (instrument.kind === 'gm' || instrument.kind === 'soundfont') {
+      let v = localStorage.getItem('ls-gm-voice') || '0';
+      if (instrument.kind === 'soundfont' && v === 'drums') v = '0';
+      const gmSel = $('gmSel');
+      gmSel.value = v;
+      if (gmSel.selectedIndex < 0) gmSel.value = '0';
+      gmSel.dispatchEvent(new Event('change'));
+    } else {
+      instrument.setDrumMode(false);
+    }
   } catch (err) {
     synthWarn('読み込み失敗: ' + (err && err.message || err));
     sel.value = '';
@@ -1118,9 +1152,15 @@ async function ensureMidi() {
 
 function updateSynthUI() {
   const active = instrument.active;
+  const kind = instrument.kind; // null | 'gm' | 'soundfont' | 'plugin'
   $('synthSel').disabled = instrument.loading;
-  $('synthGuiBtn').disabled = !active;
+  // TinySynth のGUIは上流実装が空（"no GUI"）なので、代わりに音色セレクタを出す
+  $('synthGuiBtn').disabled = !active || kind === 'gm';
+  $('synthGuiBtn').title = kind === 'gm'
+    ? 'TinySynth にプラグインGUIはありません（音色は上のセレクタで選択）'
+    : 'プラグインのGUIを開閉';
   $('pckbBtn').disabled = !active;
+  $('gmRow').hidden = !(active && (kind === 'gm' || kind === 'soundfont'));
   if (!active) {
     $('pckbBtn').classList.remove('on');
     pckb.setEnabled(false);
