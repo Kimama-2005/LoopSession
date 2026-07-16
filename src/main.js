@@ -10,6 +10,7 @@ import { Track } from './track.js';
 import { P2P, encodePcm16, decodePcm16 } from './p2p.js';
 import { InstrumentHost, PLUGIN_PRESETS, initMidi, PcKeyboard } from './instrument.js';
 import { LiveSend, LiveReceive } from './live.js';
+import { Signal, genRoomCode } from './signal.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -668,6 +669,17 @@ function initConnUI() {
     setTimeout(() => ($('copySigBtn').textContent = 'コピー'), 1200);
   });
 
+  $('hostRoomBtn').addEventListener('click', hostRoom);
+  $('joinRoomBtn').addEventListener('click', joinRoom);
+  $('roomInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') joinRoom();
+  });
+  $('copyRoomBtn').addEventListener('click', async () => {
+    await navigator.clipboard.writeText(roomCode || '');
+    $('copyRoomBtn').textContent = 'OK';
+    setTimeout(() => ($('copyRoomBtn').textContent = 'コピー'), 1200);
+  });
+
   p2p.addEventListener('status', updateBadge);
   p2p.addEventListener('open', (e) => onPeerOpen(e.detail.link));
   p2p.addEventListener('peer-close', (e) => onPeerClose(e.detail.link));
@@ -684,6 +696,114 @@ function setConnStatus(text, cls = '') {
   const el = $('connStatus');
   el.textContent = text;
   el.className = 'connStatus ' + cls;
+}
+
+// ─────────────── かんたん接続（ルームコード自動シグナリング） ───────────────
+
+let signal = null;
+let roomCode = null;
+const signalPending = new Map(); // gid → {link, sdp}（ホスト側の応答待ち）
+
+// ホスト: ルームを作って参加リクエストを待ち受ける（人数分自動で処理）
+async function hostRoom() {
+  try {
+    $('hostRoomBtn').disabled = true;
+    setConnStatus('ルーム作成中…');
+    signal = new Signal();
+    roomCode = genRoomCode();
+    await signal.connect(roomCode);
+    signal.addEventListener('msg', onSignalMsgHost);
+    $('roomCodeDisp').textContent = roomCode;
+    $('roomInfo').hidden = false;
+    $('joinRoomBtn').disabled = true;
+    setConnStatus('ルームを開きました。コードを参加者に伝えてください。参加は自動で受け付けます。', 'ok');
+  } catch (err) {
+    $('hostRoomBtn').disabled = false;
+    setConnStatus('自動接続を開始できませんでした: ' + (err && err.message || err) + '（下の手動接続を使ってください）', 'err');
+  }
+}
+
+async function onSignalMsgHost(e) {
+  const m = e.detail;
+  if (m.t === 'join') {
+    // 再送 join には同じオファーを返す
+    const pending = signalPending.get(m.gid);
+    if (pending) {
+      signal.send({ t: 'offer', gid: m.gid, sdp: pending.sdp });
+      return;
+    }
+    try {
+      setConnStatus('参加リクエストを受信。接続準備中…');
+      const { link, code } = await p2p.createOfferLink();
+      signalPending.set(m.gid, { link, sdp: code });
+      signal.send({ t: 'offer', gid: m.gid, sdp: code });
+    } catch (err) {
+      setConnStatus('接続準備に失敗: ' + (err && err.message || err), 'err');
+    }
+  } else if (m.t === 'answer') {
+    const pending = signalPending.get(m.gid);
+    if (!pending) return;
+    signalPending.delete(m.gid);
+    try {
+      await p2p.acceptAnswerFor(pending.link, m.sdp);
+      setConnStatus('接続処理中…');
+    } catch (err) {
+      setConnStatus('接続に失敗: ' + (err && err.message || err), 'err');
+    }
+  }
+}
+
+// ゲスト: コードを入れてルームに参加
+async function joinRoom() {
+  const code = $('roomInput').value.trim().toUpperCase();
+  if (code.length < 4) {
+    setConnStatus('ルームコードを入力してください。', 'err');
+    return;
+  }
+  try {
+    $('joinRoomBtn').disabled = true;
+    $('hostRoomBtn').disabled = true;
+    setConnStatus('ルームに接続中…');
+    signal = new Signal();
+    await signal.connect(code);
+    const gid = Math.random().toString(36).slice(2, 8);
+    let gotOffer = false;
+    signal.addEventListener('msg', async (e) => {
+      const m = e.detail;
+      if (m.t !== 'offer' || m.gid !== gid || gotOffer) return;
+      gotOffer = true;
+      setConnStatus('ホストが見つかりました。接続中…');
+      try {
+        const answer = await p2p.acceptRemote(m.sdp);
+        signal.send({ t: 'answer', gid, sdp: answer });
+      } catch (err) {
+        setConnStatus('接続に失敗: ' + (err && err.message || err), 'err');
+        $('joinRoomBtn').disabled = false;
+        $('hostRoomBtn').disabled = false;
+      }
+    });
+    signal.send({ t: 'join', gid });
+    // ホストからの応答がなければ数回再送してあきらめる
+    let tries = 0;
+    const retry = setInterval(() => {
+      if (gotOffer || p2p.isOpen()) {
+        clearInterval(retry);
+        return;
+      }
+      if (++tries > 6) {
+        clearInterval(retry);
+        setConnStatus('ホストが見つかりません。コードを確認してください。', 'err');
+        $('joinRoomBtn').disabled = false;
+        $('hostRoomBtn').disabled = false;
+        return;
+      }
+      signal.send({ t: 'join', gid });
+    }, 4000);
+  } catch (err) {
+    setConnStatus('自動接続に失敗: ' + (err && err.message || err) + '（下の手動接続を使ってください）', 'err');
+    $('joinRoomBtn').disabled = false;
+    $('hostRoomBtn').disabled = false;
+  }
 }
 
 function updateBadge() {
@@ -717,12 +837,21 @@ function refreshOwnerLabels() {
 
 // リンクの DataChannel が開いた（ゲスト側はクロック同期後に飛んでくる）
 function onPeerOpen(link) {
+  // ゲストはホストと繋がったらシグナリング(ブローカー)は不要
+  if (p2p.role === 'guest' && signal) {
+    signal.close();
+    signal = null;
+  }
   p2p.sendTo(link, { t: 'hello', peerId: myPeerId, name: myName });
   if (liveSend && liveSend.enabled) liveSend.sendState();
   updateBadge();
-  setConnStatus(p2p.role === 'host'
-    ? '接続しました！ さらに人数を増やすには再度「参加コードを作る」。'
-    : '接続しました！', 'ok');
+  if (p2p.role === 'host') {
+    setConnStatus(signal
+      ? '接続しました！ ルームは開いたままなので、追加の参加者も同じコードでOK。'
+      : '接続しました！ さらに人数を増やすには再度「参加コードを作る」。', 'ok');
+  } else {
+    setConnStatus('接続しました！', 'ok');
+  }
 }
 
 function onPeerClose(link) {

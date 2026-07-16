@@ -281,6 +281,22 @@ export class P2P extends EventTarget {
     return link.makeOffer();
   }
 
+  // 自動シグナリング用: 応答待ちリンクを呼び出し側で管理できる形でオファーを作る
+  // （ホストは複数ゲストの参加リクエストを並行して処理するため _pending は使わない）
+  async createOfferLink() {
+    if (this.role === 'guest') {
+      throw new Error('ゲストとして参加中はホストになれません');
+    }
+    this.role = 'host';
+    const link = this._newLink('authority');
+    const code = await link.makeOffer();
+    return { link, code };
+  }
+
+  async acceptAnswerFor(link, text) {
+    await link.acceptAnswer(decodeDesc(text));
+  }
+
   // 貼られたコードを自動判別: 参加コード(offer)→応答を返す / 応答コード(answer)→取り込み
   async acceptRemote(text) {
     const desc = decodeDesc(text);

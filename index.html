@@ -113,20 +113,39 @@
           <span class="secLabel">名前</span>
           <input id="nameInput" type="text" maxlength="16">
         </div>
-        <div class="connBtns">
-          <button id="makeOfferBtn">① 参加コードを作る（ホスト・1人ずつ）</button>
-        </div>
         <div class="sigBlock">
-          <label>自分のコード（相手に送る）</label>
-          <textarea id="localSig" readonly rows="3" placeholder="「オファーを作る」を押すとここに出ます"></textarea>
-          <button id="copySigBtn">コピー</button>
+          <label>かんたん接続（ルームコードで自動接続・推奨）</label>
+          <div class="roomRow">
+            <button id="hostRoomBtn">ルームを作る</button>
+            <span class="dim">／</span>
+            <input id="roomInput" maxlength="6" placeholder="コード" autocomplete="off">
+            <button id="joinRoomBtn">参加</button>
+          </div>
+          <div id="roomInfo" class="roomInfo" hidden>
+            <span>ルームコード</span>
+            <b id="roomCodeDisp"></b>
+            <button id="copyRoomBtn">コピー</button>
+          </div>
         </div>
-        <div class="sigBlock">
-          <label>相手のコード（貼り付け）</label>
-          <textarea id="remoteSig" rows="3" placeholder="相手から届いたコードをここに貼る"></textarea>
-          <button id="acceptSigBtn">② 受け取る</button>
-        </div>
-        <div id="connStatus" class="connStatus">未接続。ホスト: ①で作ったコードを参加者へ→返ってきた応答コードを貼って②（人数分繰り返す）。参加者: 届いたコードを貼って②→出たコードをホストへ返す。3人以上は全員がホストと接続する。</div>
+        <details id="manualConn">
+          <summary>手動接続（コピペ・自動が使えないとき用）</summary>
+          <div class="connBody" style="margin-top:8px">
+            <div class="connBtns">
+              <button id="makeOfferBtn">① 参加コードを作る（ホスト・1人ずつ）</button>
+            </div>
+            <div class="sigBlock">
+              <label>自分のコード（相手に送る）</label>
+              <textarea id="localSig" readonly rows="3" placeholder="「参加コードを作る」を押すとここに出ます"></textarea>
+              <button id="copySigBtn">コピー</button>
+            </div>
+            <div class="sigBlock">
+              <label>相手のコード（貼り付け）</label>
+              <textarea id="remoteSig" rows="3" placeholder="相手から届いたコードをここに貼る"></textarea>
+              <button id="acceptSigBtn">② 受け取る</button>
+            </div>
+          </div>
+        </details>
+        <div id="connStatus" class="connStatus">未接続。ホスト:「ルームを作る」→ 6文字コードを参加者に伝える。参加者: コードを入れて「参加」。それだけで繋がります（人数分OK）。</div>
         <div id="peerList" class="dim"></div>
       </div>
     </details>
