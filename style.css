@@ -223,6 +223,52 @@ header {
   font-size: 12px;
 }
 
+/* ソフトウェアキーボード */
+.pianoKbd { display: flex; flex-direction: column; gap: 6px; padding: 4px 0; }
+.kbdBar { display: flex; align-items: center; gap: 8px; }
+.kbdBar .tbtn { width: 30px; height: 26px; font-size: 14px; }
+#kbdRange { min-width: 66px; text-align: center; font-family: monospace; }
+.kbdKeys {
+  display: flex;
+  width: max-content;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.kbOct { position: relative; display: flex; }
+.wk {
+  width: 44px;
+  height: 132px;
+  background: #e9eaef;
+  border: 1px solid #3a3f4d;
+  border-radius: 0 0 5px 5px;
+  position: relative;
+  cursor: pointer;
+}
+.wk.down { background: var(--accent); }
+.bk {
+  position: absolute;
+  top: 0;
+  width: 27px;
+  height: 80px;
+  background: #14161d;
+  border: 1px solid #000;
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+  z-index: 2;
+  cursor: pointer;
+}
+.bk.down { background: var(--accent); }
+.wk .kLabel {
+  position: absolute;
+  bottom: 4px;
+  width: 100%;
+  text-align: center;
+  font-size: 9px;
+  color: #6a7080;
+  pointer-events: none;
+}
+
 /* ドラムパッド */
 .drumPads {
   display: grid;

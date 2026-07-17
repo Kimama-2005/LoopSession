@@ -1120,13 +1120,85 @@ function initSynthUI() {
     pads.appendChild(b);
     padByNote.set(note, b);
   }
+  // ── ソフトウェアキーボード（モバイル/タブレット演奏用） ──
+  const kbdKeyEls = new Map(); // note → 鍵盤要素
+  let kbdBase = 48; // 表示最低音 C3
+  const KBD_OCTS = 3;
+  const NOTE_NAMES = 'C C# D D# E F F# G G# A A# B'.split(' ');
+  const noteName = (n) => NOTE_NAMES[n % 12] + (Math.floor(n / 12) - 1);
+
+  const bindKey = (el, note) => {
+    el.addEventListener('pointerdown', (ev) => {
+      ev.preventDefault();
+      // 暗黙のポインタキャプチャを外してタッチでもスライド演奏できるようにする
+      try { el.releasePointerCapture(ev.pointerId); } catch {}
+      instrument.noteOn(note, 100);
+    });
+    el.addEventListener('pointerenter', (ev) => {
+      if (ev.buttons) instrument.noteOn(note, 100);
+    });
+    const off = () => instrument.noteOff(note);
+    el.addEventListener('pointerup', off);
+    el.addEventListener('pointerleave', off);
+    el.addEventListener('pointercancel', off);
+  };
+
+  const buildKbd = () => {
+    const wrap = $('kbdKeys');
+    wrap.innerHTML = '';
+    kbdKeyEls.clear();
+    const WHITE = [0, 2, 4, 5, 7, 9, 11];
+    const BLACK = [[1, 9.5], [3, 23.5], [6, 52.5], [8, 66.5], [10, 81]];
+    for (let o = 0; o < KBD_OCTS; o++) {
+      const oct = document.createElement('div');
+      oct.className = 'kbOct';
+      const base = kbdBase + o * 12;
+      for (const s of WHITE) {
+        const k = document.createElement('div');
+        k.className = 'wk';
+        if (s === 0) {
+          const l = document.createElement('span');
+          l.className = 'kLabel';
+          l.textContent = noteName(base);
+          k.appendChild(l);
+        }
+        bindKey(k, base + s);
+        kbdKeyEls.set(base + s, k);
+        oct.appendChild(k);
+      }
+      for (const [s, left] of BLACK) {
+        const k = document.createElement('div');
+        k.className = 'bk';
+        k.style.left = left + '%';
+        bindKey(k, base + s);
+        kbdKeyEls.set(base + s, k);
+        oct.appendChild(k);
+      }
+      wrap.appendChild(oct);
+    }
+    $('kbdRange').textContent = `${noteName(kbdBase)} – ${noteName(kbdBase + KBD_OCTS * 12 - 1)}`;
+  };
+  $('kbdOctDown').addEventListener('click', () => {
+    kbdBase = Math.max(12, kbdBase - 12);
+    buildKbd();
+  });
+  $('kbdOctUp').addEventListener('click', () => {
+    kbdBase = Math.min(84, kbdBase + 12);
+    buildKbd();
+  });
+  buildKbd();
+
+  // どの経路（パッド/鍵盤/PCキー/MIDI）で鳴らしてもパッド点灯・鍵盤ハイライト
   instrument.addEventListener('note', (e) => {
-    if (pads.hidden || !e.detail.on) return;
-    const b = padByNote.get(e.detail.note);
-    if (!b) return;
-    b.classList.add('hit');
-    clearTimeout(b._hitTimer);
-    b._hitTimer = setTimeout(() => b.classList.remove('hit'), 150);
+    const { note, on } = e.detail;
+    const b = padByNote.get(note);
+    if (b && !pads.hidden && on) {
+      b.classList.add('hit');
+      clearTimeout(b._hitTimer);
+      b._hitTimer = setTimeout(() => b.classList.remove('hit'), 150);
+    }
+    const key = kbdKeyEls.get(note);
+    if (key) key.classList.toggle('down', on);
   });
   $('synthVol').addEventListener('input', () => instrument.setGain(+$('synthVol').value));
   $('pckbBtn').addEventListener('click', () => {
@@ -1213,17 +1285,16 @@ function updateSynthUI() {
   const active = instrument.active;
   const kind = instrument.kind; // null | 'gm' | 'soundfont' | 'plugin'
   $('synthSel').disabled = instrument.loading;
-  // TinySynth のGUIは上流実装が空（"no GUI"）なので、代わりに音色セレクタを出す
-  $('synthGuiBtn').disabled = !active || kind === 'gm';
-  $('synthGuiBtn').title = kind === 'gm'
-    ? 'TinySynth にプラグインGUIはありません（音色は上のセレクタで選択）'
-    : 'プラグインのGUIを開閉';
+  $('synthGuiBtn').disabled = !active;
+  $('synthGuiBtn').title = 'GUI / ソフトウェアキーボードを開閉';
   $('pckbBtn').disabled = !active;
   $('gmRow').hidden = !(active && (kind === 'gm' || kind === 'soundfont'));
-  $('drumPads').hidden = !(active && kind === 'gm' && instrument.drumMode);
   if (!active) {
     $('pckbBtn').classList.remove('on');
     pckb.setEnabled(false);
+    hideSynthGui();
+  } else if (!$('synthGui').hidden) {
+    updateGuiContent(); // 音色/音源の切替をパネルに反映（パッド⇄鍵盤・GUI差し替え）
   }
 }
 
@@ -1233,27 +1304,53 @@ async function toggleSynthGui() {
     hideSynthGui();
     return;
   }
+  $('synthGui').hidden = false;
+  await updateGuiContent();
+}
+
+// GUIパネルの中身を音源の種類に合わせて出し分ける:
+// - プラグインGUIを持つ音源(OBXD等): 上にGUI + 下に鍵盤
+// - Soundfont: 音色選択が上のセレクタと重複するので鍵盤のみ
+// - TinySynth: 鍵盤のみ / ドラムキット選択時はパッドのみ
+async function updateGuiContent() {
+  if ($('synthGui').hidden) return;
+  const kind = instrument.kind;
+  const drums = kind === 'gm' && instrument.drumMode;
+  $('drumPads').hidden = !drums;
+  $('pianoKbd').hidden = drums || !instrument.active;
+  if (kind === 'plugin') await ensurePluginGui();
+  else clearPluginGui();
+}
+
+let pluginGuiFor = null; // どの音源のGUIを表示中か（URL）
+
+async function ensurePluginGui() {
+  const url = instrument.currentUrl;
+  if (pluginGuiFor === url && synthGuiEl) return;
+  clearPluginGui();
   try {
-    synthGuiEl = await instrument.createGui();
-    if (!synthGuiEl) throw new Error('このプラグインにGUIはありません');
-    const box = $('synthGui');
-    box.innerHTML = '';
-    box.appendChild(synthGuiEl);
-    box.hidden = false;
-  } catch (err) {
-    $('synthGuiBtn').classList.remove('on');
-    synthWarn('GUIを開けませんでした: ' + (err && err.message || err));
+    const gui = await instrument.createGui();
+    if (!gui || instrument.currentUrl !== url) return; // 待機中に音源が替わった
+    synthGuiEl = gui;
+    pluginGuiFor = url;
+    $('pluginGuiHost').appendChild(gui);
+  } catch {
+    // GUIが無い/壊れているプラグインは鍵盤だけ表示
   }
 }
 
-function hideSynthGui() {
-  const box = $('synthGui');
-  box.hidden = true;
+function clearPluginGui() {
   if (synthGuiEl && instrument.instance) {
     try { instrument.instance.destroyGui?.(synthGuiEl); } catch {}
   }
-  box.innerHTML = '';
+  $('pluginGuiHost').innerHTML = '';
   synthGuiEl = null;
+  pluginGuiFor = null;
+}
+
+function hideSynthGui() {
+  $('synthGui').hidden = true;
+  clearPluginGui();
   $('synthGuiBtn').classList.remove('on');
 }
 
