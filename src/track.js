@@ -44,6 +44,8 @@ export class Track extends EventTarget {
     this.state = 'empty'; // empty | armed | recording | playing
     this.recStartBar = 0;
     this.muted = false;
+    this.solo = false;
+    this.suppressed = false; // 他トラックのソロにより消音（main.js が一括計算）
     this.gain = 0.9;
     this.gainNode = engine.ctx.createGain();
     this.gainNode.gain.value = this.gain;
@@ -202,14 +204,27 @@ export class Track extends EventTarget {
 
   // ── その他 ────────────────────────────────────────────
 
+  _applyGain() {
+    this.gainNode.gain.value = this.muted || this.suppressed ? 0 : this.gain;
+  }
+
   setGain(v) {
     this.gain = v;
-    this.gainNode.gain.value = this.muted ? 0 : v;
+    this._applyGain();
   }
 
   setMuted(b) {
     this.muted = b;
-    this.gainNode.gain.value = b ? 0 : this.gain;
+    this._applyGain();
+  }
+
+  setSolo(b) {
+    this.solo = b;
+  }
+
+  setSuppressed(b) {
+    this.suppressed = b;
+    this._applyGain();
   }
 
   setLengthBars(n) {

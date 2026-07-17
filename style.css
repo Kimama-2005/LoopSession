@@ -438,6 +438,7 @@ input.tnameEdit:focus {
 .trec.recording { background: var(--rec) !important; color: #fff !important; border-color: var(--rec) !important; }
 
 .tmute.on { background: var(--arm) !important; color: #000 !important; border-color: var(--arm) !important; }
+.tsolo.on { background: var(--play) !important; color: #000 !important; border-color: var(--play) !important; }
 
 .tvol { flex: 1; min-width: 40px; accent-color: var(--accent); }
 

@@ -40,10 +40,18 @@ function ownerLabel(ownerId) {
 // ホストのミックス（音量/ミュート）に従うか（設定で切替・保存）
 let mixFollow = localStorage.getItem('ls-mix-follow') !== '0';
 
-// ホストの音量/ミュート操作を全員へ配信する
+// ホストの音量/ミュート/ソロ操作を全員へ配信する
 function sendMix(track) {
   if (p2p.role !== 'host' || !p2p.isOpen()) return;
-  p2p.send({ t: 'mix', trackId: track.id, gain: track.gain, muted: track.muted });
+  p2p.send({
+    t: 'mix', trackId: track.id, gain: track.gain, muted: track.muted, solo: track.solo,
+  });
+}
+
+// どれかのトラックがソロ中なら、非ソロトラックを消音する
+function refreshSolo() {
+  const anySolo = [...tracks.values()].some((e) => e.track.solo);
+  for (const e of tracks.values()) e.track.setSuppressed(anySolo && !e.track.solo);
 }
 
 function setTrackNameEl(el, track) {
@@ -402,6 +410,7 @@ function buildTrackRow(track) {
         <button class="tundo" title="最後のレイヤーを取り消し">UNDO</button>
         <button class="tclear">CLEAR</button>`}
         <button class="tmute" title="ミュート">M</button>
+        <button class="tsolo" title="ソロ（複数可。どれかがソロ中は他が消音）">S</button>
         <input class="tvol" type="range" min="0" max="1.2" step="0.01" value="0.9" title="音量">
       </div>
     </div>`;
@@ -424,6 +433,7 @@ function buildTrackRow(track) {
     undoBtn: el.querySelector('.tundo'),
     clearBtn: el.querySelector('.tclear'),
     muteBtn: el.querySelector('.tmute'),
+    soloBtn: el.querySelector('.tsolo'),
     volSlider: el.querySelector('.tvol'),
   };
   tracks.set(track.id, entry);
@@ -440,6 +450,12 @@ function buildTrackRow(track) {
 
   entry.muteBtn.addEventListener('click', () => {
     track.setMuted(entry.muteBtn.classList.toggle('on'));
+    sendMix(track);
+  });
+
+  entry.soloBtn.addEventListener('click', () => {
+    track.setSolo(entry.soloBtn.classList.toggle('on'));
+    refreshSolo();
     sendMix(track);
   });
 
@@ -496,6 +512,7 @@ function buildTrackRow(track) {
 
   drawWave(entry);
   updateTrackCtl(entry);
+  refreshSolo(); // ソロ中に増えたトラックも消音対象にする
   return entry;
 }
 
@@ -505,6 +522,7 @@ function removeTrack(trackId) {
   entry.track.dispose();
   entry.el.remove();
   tracks.delete(trackId);
+  refreshSolo(); // ソロ中のトラックが消えたら他の消音を解除
 }
 
 function updateTrackCtl(entry) {
@@ -946,8 +964,11 @@ function handleMsg(m, link) {
       if (!entry) return;
       entry.track.setGain(m.gain);
       entry.track.setMuted(!!m.muted);
+      entry.track.setSolo(!!m.solo);
       entry.volSlider.value = m.gain;
       entry.muteBtn.classList.toggle('on', !!m.muted);
+      entry.soloBtn.classList.toggle('on', !!m.solo);
+      refreshSolo();
       return;
     }
   }
@@ -973,7 +994,9 @@ function sendSnapshotTo(link, joinerId) {
     });
     for (const layer of track.layers) sendLayerTo(link, track, layer);
     if (p2p.role === 'host') {
-      p2p.sendTo(link, { t: 'mix', trackId: track.id, gain: track.gain, muted: track.muted });
+      p2p.sendTo(link, {
+        t: 'mix', trackId: track.id, gain: track.gain, muted: track.muted, solo: track.solo,
+      });
     }
   }
 }
