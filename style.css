@@ -50,6 +50,13 @@ header {
 }
 .logo span { color: var(--accent); }
 .logo.big { font-size: 28px; }
+.logo .buildTag {
+  font-size: 9px;
+  color: var(--dim);
+  letter-spacing: 1px;
+  margin-left: 6px;
+  vertical-align: super;
+}
 
 .badge {
   font-size: 10px;
