@@ -14,7 +14,7 @@
       <div class="logo">LOOP<span>SESSION</span>
         <!-- デプロイごとに手動で更新。ユーザーが今どのビルドを見ているかの目印
              (Pages/ブラウザのキャッシュは最大10分残るため) -->
-        <span class="buildTag" title="ビルド版。更新したはずなのに変わらない場合はスーパーリロード (Ctrl+F5)">b20</span>
+        <span class="buildTag" title="ビルド版。更新したはずなのに変わらない場合はスーパーリロード (Ctrl+F5)">b21</span>
       </div>
       <div id="connBadge" class="badge off">OFFLINE</div>
     </header>
@@ -75,19 +75,22 @@
         <button id="pckbBtn" class="tbtn toggle" title="PCキーボードで演奏 (A W S E D... / Z X でオクターブ)" disabled>KEYS</button>
         <input id="synthVol" type="range" min="0" max="1.2" step="0.01" value="0.8" title="音源の音量">
       </div>
-      <!-- GUIパネル: 上段=プラグインGUI(あれば) / ドラム時=パッド / 下段=ソフトウェアキーボード -->
+      <!-- GUIパネル: 上段=プラグインGUI(あれば) / ドラム時=パッド / 下段=ソフトウェアキーボード。
+           外枠は画面幅いっぱいの横スクロール領域。中身は収まれば中央、はみ出せば左端起点でスクロール -->
       <div id="synthGui" class="synthGui" hidden>
-        <div id="pluginGuiHost"></div>
-        <div id="drumPads" class="drumPads" hidden></div>
-        <div id="pianoKbd" class="pianoKbd" hidden>
-          <div class="kbdBar">
-            <span class="secLabel">鍵盤</span>
-            <button id="kbdOctDown" class="tbtn" title="1オクターブ下げる">−</button>
-            <span id="kbdRange" class="dim">C3 – B5</span>
-            <button id="kbdOctUp" class="tbtn" title="1オクターブ上げる">＋</button>
-            <span class="dim">クリック/タッチで演奏（スライド可）</span>
+        <div id="synthGuiInner" class="synthGuiInner">
+          <div id="pluginGuiHost"></div>
+          <div id="drumPads" class="drumPads" hidden></div>
+          <div id="pianoKbd" class="pianoKbd" hidden>
+            <div class="kbdBar">
+              <span class="secLabel">鍵盤</span>
+              <button id="kbdOctDown" class="tbtn" title="1オクターブ下げる">−</button>
+              <span id="kbdRange" class="dim">C3 – B5</span>
+              <button id="kbdOctUp" class="tbtn" title="1オクターブ上げる">＋</button>
+              <span class="dim">クリック/タッチで演奏（スライド可）</span>
+            </div>
+            <div id="kbdKeys" class="kbdKeys"></div>
           </div>
-          <div id="kbdKeys" class="kbdKeys"></div>
         </div>
       </div>
       <div id="synthWarn" class="warn" hidden></div>

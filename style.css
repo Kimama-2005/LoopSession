@@ -18,6 +18,7 @@
 [hidden] { display: none !important; }
 
 html, body { height: 100%; }
+html { overflow-x: hidden; }
 
 body {
   background: var(--bg);
@@ -25,6 +26,9 @@ body {
   font-family: "Segoe UI", system-ui, sans-serif;
   font-size: 13px;
   font-variant-numeric: tabular-nums;
+  /* GUIパネルの全幅化(縦スクロールバー幅ぶんの)はみ出しをページ横スクロールにしない。
+     鍵盤がはみ出すときは .synthGui 内部で横スクロールする */
+  overflow-x: hidden;
 }
 
 #app {
@@ -203,13 +207,19 @@ header {
 .synthRow2 #midiStatus { min-width: 70px; }
 #synthVol { flex: 1; min-width: 40px; accent-color: var(--accent); }
 /* プラグインGUI/鍵盤は全貌が見えることを優先し、アプリの横幅からはみ出すのを許可する。
-   カラムは画面中央寄せなので、はみ出す場合は画面の左端からパネルを表示する
-   （右へだけ伸びて右寄りに見えるのを防ぐ） */
+   外枠は画面幅いっぱいの横スクロール領域（アプリのカラムから左右にはみ出させる）。
+   中身のカードは margin:auto で、収まるときは画面中央、はみ出すときは左端起点で
+   スクロール（低音から見えて右へ辿れる）。 */
 .synthGui {
+  margin-left: calc(50% - 50vw);
+  margin-right: calc(50% - 50vw);
+  overflow-x: auto;
+  overflow-y: visible;
+}
+.synthGuiInner {
   width: max-content;
   max-width: none;
-  overflow: visible;
-  margin-left: min(0px, calc(50% - 50vw + 12px));
+  margin: 0 auto;
   background: var(--panel2);
   border: 1px solid var(--border);
   border-radius: 6px;
