@@ -5,7 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>LoopSession — P2P Looper</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔁</text></svg>">
-  <link rel="stylesheet" href="./style.css">
+  <!-- ?v はビルドタグと同期。更新のたびに上げるとブラウザが確実に新CSSを読む
+       (GitHub Pages のキャッシュで古い見た目が残るのを防ぐ) -->
+  <link rel="stylesheet" href="./style.css?v=b22">
 </head>
 <body>
   <div id="app">
@@ -14,7 +16,7 @@
       <div class="logo">LOOP<span>SESSION</span>
         <!-- デプロイごとに手動で更新。ユーザーが今どのビルドを見ているかの目印
              (Pages/ブラウザのキャッシュは最大10分残るため) -->
-        <span class="buildTag" title="ビルド版。更新したはずなのに変わらない場合はスーパーリロード (Ctrl+F5)">b21</span>
+        <span class="buildTag" title="ビルド版。更新したはずなのに変わらない場合はスーパーリロード (Ctrl+F5)">b22</span>
       </div>
       <div id="connBadge" class="badge off">OFFLINE</div>
     </header>
