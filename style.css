@@ -202,15 +202,18 @@ header {
 }
 .synthRow2 #midiStatus { min-width: 70px; }
 #synthVol { flex: 1; min-width: 40px; accent-color: var(--accent); }
-/* プラグインGUIは全貌が見えることを優先し、アプリの横幅からはみ出すのを許可する */
+/* プラグインGUI/鍵盤は全貌が見えることを優先し、アプリの横幅からはみ出すのを許可する。
+   カラムは画面中央寄せなので、はみ出す場合は画面の左端からパネルを表示する
+   （右へだけ伸びて右寄りに見えるのを防ぐ） */
 .synthGui {
   width: max-content;
   max-width: none;
   overflow: visible;
+  margin-left: min(0px, calc(50% - 50vw + 12px));
   background: var(--panel2);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 4px;
+  padding: 6px;
 }
 #gmSel {
   flex: 1;
@@ -274,6 +277,7 @@ header {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 6px;
+  min-width: 420px; /* max-content の親の中でパッドが痩せすぎないように */
 }
 .pad {
   height: 52px;
